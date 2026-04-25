@@ -1,0 +1,37 @@
+# controller_manager only manages the X3 Plus arm joints. The simulated base is
+# moved by Gazebo's VelocityControl system because the vendor X3 Plus model does
+# not contain wheel links or wheel joints.
+controller_manager:
+ ros__parameters:
+   update_rate: 50
+
+   joint_state_broadcaster:
+     type: joint_state_broadcaster/JointStateBroadcaster
+
+   arm_controller:
+     type: joint_trajectory_controller/JointTrajectoryController
+
+   gripper_controller:
+     type: position_controllers/JointGroupPositionController
+
+arm_controller:
+ ros__parameters:
+   joints:
+     - arm_joint1
+     - arm_joint2
+     - arm_joint3
+     - arm_joint4
+     - arm_joint5
+   command_interfaces:
+     - position
+   state_interfaces:
+     - position
+     - velocity
+   allow_partial_joints_goal: false
+   open_loop_control: true
+
+gripper_controller:
+ ros__parameters:
+   joints:
+     - grip_joint
+   interface_name: position

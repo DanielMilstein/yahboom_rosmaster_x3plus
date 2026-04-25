@@ -1,3 +1,29 @@
+# ROS 2 Build & Workspace Directories
+install/
+log/
+build/
+
+# Colcon & Ament Marker Files
+COLCON_IGNORE
+AMENT_IGNORE
+
+# Generated Documentation
+*.dox
+*.wikidoc
+
+# Python Artifacts
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Common Editor/IDE Files
+.vscode/
+.idea/
+*.swp
+*~
+.#*
+CMakeLists.txt.user
 devel/
 logs/
 build/
