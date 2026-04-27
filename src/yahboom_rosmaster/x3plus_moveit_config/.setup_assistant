@@ -1,0 +1,25 @@
+moveit_setup_assistant_config:
+  urdf:
+    package: yahboom_rosmaster_description
+    relative_path: urdf/robots/rosmaster_x3_plus.urdf.xacro
+  srdf:
+    relative_path: config/rosmaster_x3_plus.srdf
+  package_settings:
+    author_name: Daniel Milstein
+    author_email: dnmilstein@miuandes.cl
+    generated_timestamp: 1777325403
+  control_xacro:
+    command:
+      - position
+    state:
+      - position
+      - velocity
+  modified_urdf:
+    xacros:
+      - control_xacro
+  control_xacro:
+    command:
+      - position
+    state:
+      - position
+      - velocity

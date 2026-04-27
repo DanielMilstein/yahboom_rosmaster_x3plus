@@ -1,0 +1,9 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="rosmaster_x3_plus">
+    <xacro:arg name="initial_positions_file" default="initial_positions.yaml" />
+
+    <!-- Import rosmaster_x3_plus urdf file -->
+    <xacro:include filename="$(find yahboom_rosmaster_description)/urdf/robots/rosmaster_x3_plus.urdf.xacro" />
+
+
+</robot>
