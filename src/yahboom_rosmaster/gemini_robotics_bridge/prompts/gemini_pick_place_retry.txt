@@ -1,0 +1,4 @@
+The previous response was malformed or failed schema validation.
+Return only valid JSON matching the required pick_place_v1 schema.
+Do not include Markdown, explanations, trajectories, robot joint values,
+velocity commands, controller commands, or fields outside the schema.

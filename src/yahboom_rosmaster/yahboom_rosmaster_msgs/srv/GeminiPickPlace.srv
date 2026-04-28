@@ -1,0 +1,9 @@
+string task
+sensor_msgs/Image image
+---
+bool success
+bool accepted
+float32 confidence
+string result_json
+string error_message
+string log_path
