@@ -26,6 +26,20 @@ Visualization Manager:
       Scene Robot:
         Robot Alpha: 0.5
       Value: true
+    - Class: rviz_default_plugins/Marker
+      Name: Perception Debug Marker
+      Namespaces:
+        perception_bridge: true
+      Queue Size: 100
+      Topic: /perception_bridge/debug_marker
+      Value: true
+    - Class: rviz_default_plugins/Image
+      Name: Perception Debug Image
+      Normalize Range: true
+      Queue Size: 2
+      Topic: /perception_bridge/debug_image
+      Transport Hint: raw
+      Value: true
   Global Options:
     Fixed Frame: base_footprint
   Tools:

@@ -76,6 +76,21 @@ def generate_launch_description():
         parameters=[{"use_sim_time": use_sim_time}],
     )
 
+    perception_bridge_node = Node(
+        package="x3plus_moveit_config",
+        executable="perception_bridge.py",
+        output="screen",
+        parameters=[
+            {
+                "use_sim_time": use_sim_time,
+                "rgb_topic": "/cam_1/color/image_raw",
+                "depth_topic": "/cam_1/depth/image_raw",
+                "camera_info_topic": "/cam_1/color/camera_info",
+                "base_frame": "base_footprint",
+            }
+        ],
+    )
+
     rviz_node = Node(
         package="rviz2",
         executable="rviz2",
@@ -103,5 +118,6 @@ def generate_launch_description():
             TimerAction(period=2.0, actions=[rviz_node]),
             TimerAction(period=5.0, actions=[move_group_node]),
             TimerAction(period=8.0, actions=[tabletop_scene_node]),
+            TimerAction(period=8.0, actions=[perception_bridge_node]),
         ]
     )

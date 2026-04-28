@@ -8,6 +8,7 @@ ament_package()
 install(
   PROGRAMS
     scripts/filter_moveit_joint_states.py
+    scripts/perception_bridge.py
     scripts/publish_tabletop_scene.py
   DESTINATION lib/${PROJECT_NAME})
 
