@@ -41,6 +41,12 @@ class PerceptionBridge(Node):
         self.declare_parameter("debug_pixel_u", -1)
         self.declare_parameter("debug_pixel_v", -1)
         self.declare_parameter("depth_search_radius", 10)
+        self.declare_parameter("override_intrinsics", False)
+        self.declare_parameter("override_fx", 0.0)
+        self.declare_parameter("override_fy", 0.0)
+        self.declare_parameter("override_cx", 0.0)
+        self.declare_parameter("override_cy", 0.0)
+        self.declare_parameter("expected_horizontal_fov", -1.0)
 
         self.rgb_topic = self.get_parameter("rgb_topic").value
         self.depth_topic = self.get_parameter("depth_topic").value
@@ -61,6 +67,8 @@ class PerceptionBridge(Node):
         self.latest_synced_stamp = None
         self.last_debug_pixel = None
         self.last_depth_pixel = None
+        self.warned_camera_info = False
+        self.warned_intrinsics_override = False
 
         self.tf_buffer = tf2_ros.Buffer(cache_time=Duration(seconds=10.0))
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
@@ -118,6 +126,7 @@ class PerceptionBridge(Node):
 
     def camera_info_callback(self, msg):
         self.latest_camera_info = msg
+        self.warn_if_camera_info_suspicious(msg)
 
     def capture_latest_rgb_frame(self):
         return self.latest_rgb
@@ -127,6 +136,64 @@ class PerceptionBridge(Node):
 
     def capture_camera_intrinsics(self):
         return self.latest_camera_info
+
+    def warn_if_camera_info_suspicious(self, camera_info):
+        if self.warned_camera_info:
+            return
+
+        warnings = []
+        expected_cx = camera_info.width * 0.5
+        expected_cy = camera_info.height * 0.5
+        cx = camera_info.k[2]
+        cy = camera_info.k[5]
+        fx = camera_info.k[0]
+
+        if abs(cx - expected_cx) > max(2.0, camera_info.width * 0.05):
+            warnings.append(
+                f"cx={cx:.3f} is far from image center {expected_cx:.3f}"
+            )
+        if abs(cy - expected_cy) > max(2.0, camera_info.height * 0.05):
+            warnings.append(
+                f"cy={cy:.3f} is far from image center {expected_cy:.3f}"
+            )
+
+        expected_horizontal_fov = float(
+            self.get_parameter("expected_horizontal_fov").value
+        )
+        if expected_horizontal_fov > 0.0 and camera_info.width > 0:
+            expected_fx = camera_info.width / (
+                2.0 * math.tan(expected_horizontal_fov * 0.5)
+            )
+            if expected_fx > 0.0 and abs(fx - expected_fx) / expected_fx > 0.05:
+                warnings.append(
+                    f"fx={fx:.3f} differs from FOV-derived fx={expected_fx:.3f}"
+                )
+
+        if warnings:
+            self.warned_camera_info = True
+            self.get_logger().warn(
+                "CameraInfo may not match the image geometry: " + "; ".join(warnings)
+            )
+
+    def get_projection_intrinsics(self, camera_info):
+        if bool(self.get_parameter("override_intrinsics").value):
+            fx = float(self.get_parameter("override_fx").value)
+            fy = float(self.get_parameter("override_fy").value)
+            cx = float(self.get_parameter("override_cx").value)
+            cy = float(self.get_parameter("override_cy").value)
+            if fx <= 0.0 or fy <= 0.0:
+                raise RuntimeError(
+                    "override_intrinsics requires positive override_fx and override_fy"
+                )
+            if not self.warned_intrinsics_override:
+                self.warned_intrinsics_override = True
+                self.get_logger().warn(
+                    "Using explicit projection intrinsics "
+                    f"fx={fx:.3f}, fy={fy:.3f}, cx={cx:.3f}, cy={cy:.3f}"
+                )
+            return fx, fy, cx, cy
+
+        return camera_info.k[0], camera_info.k[4], camera_info.k[2], camera_info.k[5]
 
     def pixel_callback(self, msg):
         u = int(round(msg.point.x))
@@ -184,10 +251,7 @@ class PerceptionBridge(Node):
         if not math.isfinite(depth_m) or depth_m <= 0.0:
             raise RuntimeError(f"Invalid depth {depth_m} at pixel ({u}, {v})")
 
-        fx = camera_info.k[0]
-        fy = camera_info.k[4]
-        cx = camera_info.k[2]
-        cy = camera_info.k[5]
+        fx, fy, cx, cy = self.get_projection_intrinsics(camera_info)
         if fx == 0.0 or fy == 0.0:
             raise RuntimeError("camera_info has invalid focal length")
 

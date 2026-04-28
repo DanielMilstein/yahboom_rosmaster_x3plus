@@ -87,6 +87,12 @@ def generate_launch_description():
                 "depth_topic": "/cam_1/depth/image_raw",
                 "camera_info_topic": "/cam_1/color/camera_info",
                 "base_frame": "base_footprint",
+                "override_intrinsics": True,
+                "override_fx": 168.61097411363642,
+                "override_fy": 168.61097411363642,
+                "override_cx": 160.0,
+                "override_cy": 90.0,
+                "expected_horizontal_fov": 1.5184,
             }
         ],
     )

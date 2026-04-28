@@ -95,7 +95,7 @@
         </collision>
     </link>
     <joint name="$(arg prefix)astra_joint" type="fixed">
-        <origin xyz="-0.043645 0 0.41955" rpy="0 0 0"/>
+        <origin xyz="-0.043645 0 0.41955" rpy="0 0.65 0"/>
         <parent link="$(arg prefix)base_link"/>
         <child link="$(arg prefix)camera_link"/>
     </joint>

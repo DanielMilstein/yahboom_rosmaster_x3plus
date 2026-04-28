@@ -10,7 +10,7 @@ and processing of URDF/XACRO files and controller configurations.
 :date: November 20, 2024
 """
 import os
-from pathlib import Path
+from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, OpaqueFunction
 from launch.conditions import IfCondition, UnlessCondition
@@ -24,8 +24,8 @@ def process_ros2_controllers_config(context):
     """Process the ROS 2 controller configuration yaml file before loading the URDF.
 
     This function reads a template configuration file, replaces placeholder values
-    with actual configuration, and writes the processed file to both source and
-    install directories.
+    with actual configuration, and writes the processed file to the package share
+    directory.
 
     Args:
         context: Launch context containing configuration values
@@ -39,22 +39,14 @@ def process_ros2_controllers_config(context):
     robot_name = LaunchConfiguration('robot_name').perform(context)
     enable_odom_tf = LaunchConfiguration('enable_odom_tf').perform(context)
 
-    home = str(Path.home())
-
-    # Define both source and install paths
-    src_config_path = os.path.join(
-        home,
-        'ros2_ws/src/yahboom_rosmaster/yahboom_rosmaster_description/config',
-        robot_name
-    )
-    install_config_path = os.path.join(
-        home,
-        'ros2_ws/install/yahboom_rosmaster_description/share/yahboom_rosmaster_description/config',
+    config_path = os.path.join(
+        get_package_share_directory('yahboom_rosmaster_description'),
+        'config',
         robot_name
     )
 
     # Read from source template
-    template_path = os.path.join(src_config_path, 'ros2_controllers_template.yaml')
+    template_path = os.path.join(config_path, 'ros2_controllers_template.yaml')
     with open(template_path, 'r', encoding='utf-8') as file:
         template_content = file.read()
 
@@ -63,12 +55,11 @@ def process_ros2_controllers_config(context):
     processed_content = processed_content.replace(
         'enable_odom_tf: true', f'enable_odom_tf: {enable_odom_tf}')
 
-    # Write processed content to both source and install directories
-    for config_path in [src_config_path, install_config_path]:
-        os.makedirs(config_path, exist_ok=True)
-        output_path = os.path.join(config_path, 'ros2_controllers.yaml')
-        with open(output_path, 'w', encoding='utf-8') as file:
-            file.write(processed_content)
+    # Write processed content beside the installed template.
+    os.makedirs(config_path, exist_ok=True)
+    output_path = os.path.join(config_path, 'ros2_controllers.yaml')
+    with open(output_path, 'w', encoding='utf-8') as file:
+        file.write(processed_content)
 
     return []
 
