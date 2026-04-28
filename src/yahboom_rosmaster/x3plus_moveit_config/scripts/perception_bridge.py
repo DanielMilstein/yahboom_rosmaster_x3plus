@@ -40,6 +40,7 @@ class PerceptionBridge(Node):
         self.declare_parameter("sync_slop", 0.08)
         self.declare_parameter("debug_pixel_u", -1)
         self.declare_parameter("debug_pixel_v", -1)
+        self.declare_parameter("depth_search_radius", 10)
 
         self.rgb_topic = self.get_parameter("rgb_topic").value
         self.depth_topic = self.get_parameter("depth_topic").value
@@ -59,6 +60,7 @@ class PerceptionBridge(Node):
         self.latest_camera_info = None
         self.latest_synced_stamp = None
         self.last_debug_pixel = None
+        self.last_depth_pixel = None
 
         self.tf_buffer = tf2_ros.Buffer(cache_time=Duration(seconds=10.0))
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
@@ -156,7 +158,8 @@ class PerceptionBridge(Node):
         self.base_point_pub.publish(base_point)
         self.publish_marker(base_point)
         self.get_logger().info(
-            f"pixel=({u}, {v}) camera=({camera_point.point.x:.3f}, "
+            f"pixel=({u}, {v}) depth_pixel={self.last_depth_pixel} "
+            f"camera=({camera_point.point.x:.3f}, "
             f"{camera_point.point.y:.3f}, {camera_point.point.z:.3f}) "
             f"{self.base_frame}=({base_point.point.x:.3f}, "
             f"{base_point.point.y:.3f}, {base_point.point.z:.3f})"
@@ -175,7 +178,9 @@ class PerceptionBridge(Node):
                 f"Pixel ({u}, {v}) is outside depth image {depth_msg.width}x{depth_msg.height}"
             )
 
-        depth_m = self.depth_at_pixel(depth_msg, u, v)
+        depth_m, depth_u, depth_v = self.depth_near_pixel(depth_msg, u, v)
+        self.last_depth_pixel = (depth_u, depth_v)
+        self.publish_debug_image()
         if not math.isfinite(depth_m) or depth_m <= 0.0:
             raise RuntimeError(f"Invalid depth {depth_m} at pixel ({u}, {v})")
 
@@ -189,10 +194,41 @@ class PerceptionBridge(Node):
         point = PointStamped()
         point.header.stamp = depth_msg.header.stamp
         point.header.frame_id = depth_msg.header.frame_id or camera_info.header.frame_id
-        point.point.x = (float(u) - cx) * depth_m / fx
-        point.point.y = (float(v) - cy) * depth_m / fy
+        point.point.x = (float(depth_u) - cx) * depth_m / fx
+        point.point.y = (float(depth_v) - cy) * depth_m / fy
         point.point.z = depth_m
         return point
+
+    def depth_near_pixel(self, depth_msg, u, v):
+        depth_m = self.depth_at_pixel(depth_msg, u, v)
+        if math.isfinite(depth_m) and depth_m > 0.0:
+            return depth_m, u, v
+
+        radius = int(self.get_parameter("depth_search_radius").value)
+        best = None
+        for dy in range(-radius, radius + 1):
+            sample_v = v + dy
+            if sample_v < 0 or sample_v >= depth_msg.height:
+                continue
+            for dx in range(-radius, radius + 1):
+                sample_u = u + dx
+                if sample_u < 0 or sample_u >= depth_msg.width:
+                    continue
+                sample_depth = self.depth_at_pixel(depth_msg, sample_u, sample_v)
+                if not math.isfinite(sample_depth) or sample_depth <= 0.0:
+                    continue
+                distance_sq = dx * dx + dy * dy
+                if best is None or distance_sq < best[0]:
+                    best = (distance_sq, sample_depth, sample_u, sample_v)
+
+        if best is None:
+            return depth_m, u, v
+
+        _, sample_depth, sample_u, sample_v = best
+        self.get_logger().info(
+            f"Using nearest valid depth pixel ({sample_u}, {sample_v}) for requested pixel ({u}, {v})"
+        )
+        return sample_depth, sample_u, sample_v
 
     def depth_at_pixel(self, depth_msg, u, v):
         index = v * depth_msg.width + u
@@ -295,6 +331,13 @@ class PerceptionBridge(Node):
                 )
                 cv2.line(image, (max(0, u - 16), v), (min(width - 1, u + 16), v), color, 1)
                 cv2.line(image, (u, max(0, v - 16)), (u, min(height - 1, v + 16)), color, 1)
+
+        if self.last_depth_pixel is not None:
+            u, v = self.last_depth_pixel
+            height, width = image.shape[:2]
+            if 0 <= u < width and 0 <= v < height:
+                color = (0, 255, 255)
+                cv2.circle(image, (u, v), 5, color, 2)
 
         debug_msg = self.bridge.cv2_to_imgmsg(image, encoding="bgr8")
         debug_msg.header = rgb_msg.header

@@ -19,9 +19,20 @@ MOVEIT_JOINTS = {
 class MoveItJointStateFilter(Node):
     def __init__(self):
         super().__init__("moveit_joint_state_filter")
+        self.declare_parameter("publish_rate", 15.0)
+        publish_rate = self.get_parameter("publish_rate").value
+        if publish_rate <= 0.0:
+            self.get_logger().warn("publish_rate must be positive; using 15 Hz")
+            publish_rate = 15.0
+
+        self.latest_msg = None
         self.publisher = self.create_publisher(JointState, "/moveit_joint_states", 10)
         self.subscription = self.create_subscription(
             JointState, "/joint_states", self.filter_joint_states, 10
+        )
+        self.timer = self.create_timer(1.0 / publish_rate, self.publish_latest)
+        self.get_logger().info(
+            f"Publishing filtered MoveIt joint states at up to {publish_rate:.1f} Hz"
         )
 
     def filter_joint_states(self, msg):
@@ -41,7 +52,12 @@ class MoveItJointStateFilter(Node):
                 filtered.effort.append(msg.effort[index])
 
         if filtered.name:
-            self.publisher.publish(filtered)
+            self.latest_msg = filtered
+
+    def publish_latest(self):
+        if self.latest_msg is not None:
+            self.publisher.publish(self.latest_msg)
+            self.latest_msg = None
 
 
 def main():
