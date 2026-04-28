@@ -6,7 +6,9 @@ find_package(ament_cmake REQUIRED)
 ament_package()
 
 install(
-  PROGRAMS scripts/filter_moveit_joint_states.py
+  PROGRAMS
+    scripts/filter_moveit_joint_states.py
+    scripts/publish_tabletop_scene.py
   DESTINATION lib/${PROJECT_NAME})
 
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/launch")

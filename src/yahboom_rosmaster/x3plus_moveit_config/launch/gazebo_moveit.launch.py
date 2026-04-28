@@ -69,6 +69,13 @@ def generate_launch_description():
         ],
     )
 
+    tabletop_scene_node = Node(
+        package="x3plus_moveit_config",
+        executable="publish_tabletop_scene.py",
+        output="screen",
+        parameters=[{"use_sim_time": use_sim_time}],
+    )
+
     rviz_node = Node(
         package="rviz2",
         executable="rviz2",
@@ -90,10 +97,11 @@ def generate_launch_description():
             DeclareLaunchArgument("headless", default_value="false"),
             DeclareLaunchArgument("moveit_rviz", default_value="true"),
             DeclareLaunchArgument("use_sim_time", default_value="true"),
-            DeclareLaunchArgument("world_file", default_value="empty.world"),
+            DeclareLaunchArgument("world_file", default_value="tabletop_can_bin.world"),
             gazebo_launch,
             joint_state_filter_node,
             TimerAction(period=2.0, actions=[rviz_node]),
             TimerAction(period=5.0, actions=[move_group_node]),
+            TimerAction(period=8.0, actions=[tabletop_scene_node]),
         ]
     )
