@@ -9700,3 +9700,470 @@
 [04/27 19:03:39.123793][debug][712494][Pipeline.cpp:319] Frame received on pipeline! type=OB_FRAME_COLOR [**1801 logs in 60026ms**]
 [04/27 19:03:42.016012][debug][712480][VideoSensor.cpp:427] OB_SENSOR_COLOR Streaming... frameRate=30.007948fps
 [04/27 19:03:43.245898][debug][712487][Pipeline.cpp:323] Pipeline streaming... frameset output rate=29.994001fps
+[04/27 19:03:47.016201][debug][712480][VideoSensor.cpp:427] OB_SENSOR_COLOR Streaming... frameRate=29.994001fps
+[04/27 19:03:48.246672][debug][712487][Pipeline.cpp:323] Pipeline streaming... frameset output rate=29.994001fps
+[04/27 19:03:52.048219][debug][712480][VideoSensor.cpp:427] OB_SENSOR_COLOR Streaming... frameRate=30.007948fps
+[04/27 19:03:53.247385][debug][712487][Pipeline.cpp:323] Pipeline streaming... frameset output rate=29.994001fps
+[04/27 19:03:57.084259][debug][712480][VideoSensor.cpp:427] OB_SENSOR_COLOR Streaming... frameRate=29.984116fps
+[04/27 19:03:58.248240][debug][712487][Pipeline.cpp:323] Pipeline streaming... frameset output rate=29.994001fps
+[04/27 19:04:02.116403][debug][712480][VideoSensor.cpp:427] OB_SENSOR_COLOR Streaming... frameRate=30.007948fps
+[04/27 19:04:03.281992][debug][712487][Pipeline.cpp:323] Pipeline streaming... frameset output rate=30.001987fps
+[04/27 19:04:07.148481][debug][712480][VideoSensor.cpp:427] OB_SENSOR_COLOR Streaming... frameRate=30.007948fps
+[04/27 19:04:08.282945][debug][712487][Pipeline.cpp:323] Pipeline streaming... frameset output rate=29.994001fps
+[04/27 19:04:12.180680][debug][712480][VideoSensor.cpp:427] OB_SENSOR_COLOR Streaming... frameRate=30.007948fps
+[04/27 19:04:13.283689][debug][712487][Pipeline.cpp:323] Pipeline streaming... frameset output rate=29.994001fps
+[04/27 19:04:17.212748][debug][712480][VideoSensor.cpp:427] OB_SENSOR_COLOR Streaming... frameRate=30.007948fps
+[04/27 19:04:18.284417][debug][712487][Pipeline.cpp:323] Pipeline streaming... frameset output rate=30.193962fps
+[04/27 19:04:22.244871][debug][712480][VideoSensor.cpp:427] OB_SENSOR_COLOR Streaming... frameRate=30.007948fps
+[04/27 19:04:23.318279][debug][712487][Pipeline.cpp:323] Pipeline streaming... frameset output rate=29.996027fps
+[04/27 19:04:27.281003][debug][712480][VideoSensor.cpp:427] OB_SENSOR_COLOR Streaming... frameRate=29.984116fps
+[04/27 19:04:28.319348][debug][712487][Pipeline.cpp:323] Pipeline streaming... frameset output rate=29.994001fps
+[04/27 19:04:32.313212][debug][712480][VideoSensor.cpp:427] OB_SENSOR_COLOR Streaming... frameRate=30.001987fps
+[04/27 19:04:33.320077][debug][712487][Pipeline.cpp:323] Pipeline streaming... frameset output rate=29.994001fps
+[04/27 19:04:37.345232][debug][712480][VideoSensor.cpp:427] OB_SENSOR_COLOR Streaming... frameRate=30.007948fps
+[04/27 19:04:37.384689][debug][922411][Pipeline.cpp:319] Frame received on pipeline! type=OB_FRAME_DEPTH [**1800 logs in 60009ms, last: 19:04:37.357937**]
+[04/27 19:04:37.412078][debug][922412][Pipeline.cpp:319] Frame received on pipeline! type=OB_FRAME_IR [**1800 logs in 60008ms, last: 19:04:37.387099**]
+[04/27 19:04:38.353800][debug][712487][Pipeline.cpp:323] Pipeline streaming... frameset output rate=30.001987fps
+[04/27 19:04:39.153310][debug][712494][Pipeline.cpp:319] Frame received on pipeline! type=OB_FRAME_COLOR [**1801 logs in 60029ms**]
+[04/27 19:04:42.377351][debug][712480][VideoSensor.cpp:427] OB_SENSOR_COLOR Streaming... frameRate=30.007948fps
+[04/27 19:04:43.354527][debug][712487][Pipeline.cpp:323] Pipeline streaming... frameset output rate=29.994001fps
+[04/27 19:04:47.409455][debug][712480][VideoSensor.cpp:427] OB_SENSOR_COLOR Streaming... frameRate=30.007948fps
+[04/27 19:04:48.355313][debug][712487][Pipeline.cpp:323] Pipeline streaming... frameset output rate=29.994001fps
+[04/27 19:04:52.441547][debug][712480][VideoSensor.cpp:427] OB_SENSOR_COLOR Streaming... frameRate=30.007948fps
+[04/27 19:04:53.356041][debug][712487][Pipeline.cpp:323] Pipeline streaming... frameset output rate=29.994001fps
+[04/27 19:04:57.473734][debug][712480][VideoSensor.cpp:427] OB_SENSOR_COLOR Streaming... frameRate=30.007948fps
+[04/27 19:04:58.390263][debug][712487][Pipeline.cpp:323] Pipeline streaming... frameset output rate=29.996027fps
+[04/27 19:05:02.474714][debug][712480][VideoSensor.cpp:427] OB_SENSOR_COLOR Streaming... frameRate=29.994001fps
+[04/27 19:05:03.391305][debug][712487][Pipeline.cpp:323] Pipeline streaming... frameset output rate=29.994001fps
+[04/27 19:05:07.505981][debug][712480][VideoSensor.cpp:427] OB_SENSOR_COLOR Streaming... frameRate=30.013912fps
+[04/27 19:05:08.392047][debug][712487][Pipeline.cpp:323] Pipeline streaming... frameset output rate=29.994001fps
+[04/27 19:05:12.506060][debug][712480][VideoSensor.cpp:427] OB_SENSOR_COLOR Streaming... frameRate=29.994001fps
+[04/27 19:05:13.425884][debug][712487][Pipeline.cpp:323] Pipeline streaming... frameset output rate=30.001987fps
+[04/27 19:05:17.538219][debug][712480][VideoSensor.cpp:427] OB_SENSOR_COLOR Streaming... frameRate=30.007948fps
+[04/27 19:05:18.426723][debug][712487][Pipeline.cpp:323] Pipeline streaming... frameset output rate=29.994001fps
+[04/27 19:05:22.574288][debug][712480][VideoSensor.cpp:427] OB_SENSOR_COLOR Streaming... frameRate=29.984116fps
+[04/27 19:05:23.427485][debug][712487][Pipeline.cpp:323] Pipeline streaming... frameset output rate=29.994001fps
+[04/27 19:05:27.606379][debug][712480][VideoSensor.cpp:427] OB_SENSOR_COLOR Streaming... frameRate=30.007948fps
+[04/27 19:05:28.428311][debug][712487][Pipeline.cpp:323] Pipeline streaming... frameset output rate=29.994001fps
+[04/27 19:05:32.638507][debug][712480][VideoSensor.cpp:427] OB_SENSOR_COLOR Streaming... frameRate=30.007948fps
+[04/27 19:05:33.429232][debug][712487][Pipeline.cpp:323] Pipeline streaming... frameset output rate=29.994001fps
+[04/27 19:05:37.390812][debug][924869][Pipeline.cpp:319] Frame received on pipeline! type=OB_FRAME_DEPTH [**1800 logs in 60006ms, last: 19:05:37.367984**]
+[04/27 19:05:37.420634][debug][924870][Pipeline.cpp:319] Frame received on pipeline! type=OB_FRAME_IR [**1800 logs in 60008ms, last: 19:05:37.396402**]
+[04/27 19:05:37.670585][debug][712480][VideoSensor.cpp:427] OB_SENSOR_COLOR Streaming... frameRate=30.007948fps
+[04/27 19:05:38.463139][debug][712487][Pipeline.cpp:323] Pipeline streaming... frameset output rate=29.996027fps
+[04/27 19:05:39.177202][debug][712494][Pipeline.cpp:319] Frame received on pipeline! type=OB_FRAME_COLOR [**1801 logs in 60023ms**]
+[04/27 19:05:42.702706][debug][712480][VideoSensor.cpp:427] OB_SENSOR_COLOR Streaming... frameRate=30.007948fps
+[04/27 19:05:43.497231][debug][712487][Pipeline.cpp:323] Pipeline streaming... frameset output rate=29.996027fps
+[04/27 19:05:47.734852][debug][712480][VideoSensor.cpp:427] OB_SENSOR_COLOR Streaming... frameRate=30.007948fps
+[04/27 19:05:48.531248][debug][712487][Pipeline.cpp:323] Pipeline streaming... frameset output rate=29.996027fps
+[04/27 19:05:52.770960][debug][712480][VideoSensor.cpp:427] OB_SENSOR_COLOR Streaming... frameRate=29.984116fps
+[04/27 19:05:53.565385][debug][712487][Pipeline.cpp:323] Pipeline streaming... frameset output rate=29.996027fps
+[04/27 19:05:57.803057][debug][712480][VideoSensor.cpp:427] OB_SENSOR_COLOR Streaming... frameRate=30.001987fps
+[04/27 19:05:58.566127][debug][712487][Pipeline.cpp:323] Pipeline streaming... frameset output rate=29.994001fps
+[04/27 19:06:02.835201][debug][712480][VideoSensor.cpp:427] OB_SENSOR_COLOR Streaming... frameRate=30.007948fps
+[04/27 19:06:03.600217][debug][712487][Pipeline.cpp:323] Pipeline streaming... frameset output rate=29.996027fps
+[04/27 19:06:07.867337][debug][712480][VideoSensor.cpp:427] OB_SENSOR_COLOR Streaming... frameRate=30.007948fps
+[04/27 19:06:08.634311][debug][712487][Pipeline.cpp:323] Pipeline streaming... frameset output rate=29.996027fps
+[04/27 19:06:12.899453][debug][712480][VideoSensor.cpp:427] OB_SENSOR_COLOR Streaming... frameRate=30.007948fps
+[04/27 19:06:13.668372][debug][712487][Pipeline.cpp:323] Pipeline streaming... frameset output rate=29.996027fps
+[04/27 19:06:17.931575][debug][712480][VideoSensor.cpp:427] OB_SENSOR_COLOR Streaming... frameRate=30.007948fps
+[04/27 19:06:18.669049][debug][712487][Pipeline.cpp:323] Pipeline streaming... frameset output rate=29.994001fps
+[04/27 19:06:22.967721][debug][712480][VideoSensor.cpp:427] OB_SENSOR_COLOR Streaming... frameRate=29.984116fps
+[04/27 19:06:23.703217][debug][712487][Pipeline.cpp:323] Pipeline streaming... frameset output rate=30.194677fps
+[04/27 19:06:27.999764][debug][712480][VideoSensor.cpp:427] OB_SENSOR_COLOR Streaming... frameRate=30.007948fps
+[04/27 19:06:28.704632][debug][712487][Pipeline.cpp:323] Pipeline streaming... frameset output rate=29.994001fps
+[04/27 19:06:33.031879][debug][712480][VideoSensor.cpp:427] OB_SENSOR_COLOR Streaming... frameRate=30.007948fps
+[04/27 19:06:33.738004][debug][712487][Pipeline.cpp:323] Pipeline streaming... frameset output rate=30.001987fps
+[04/27 19:06:37.402427][debug][927237][Pipeline.cpp:319] Frame received on pipeline! type=OB_FRAME_DEPTH [**1800 logs in 60011ms, last: 19:06:37.374934**]
+[04/27 19:06:37.429979][debug][927240][Pipeline.cpp:319] Frame received on pipeline! type=OB_FRAME_IR [**1800 logs in 60009ms, last: 19:06:37.405436**]
+[04/27 19:06:38.064061][debug][712480][VideoSensor.cpp:427] OB_SENSOR_COLOR Streaming... frameRate=30.001987fps
+[04/27 19:06:38.738700][debug][712487][Pipeline.cpp:323] Pipeline streaming... frameset output rate=29.994001fps
+[04/27 19:06:39.202671][debug][712494][Pipeline.cpp:319] Frame received on pipeline! type=OB_FRAME_COLOR [**1801 logs in 60025ms**]
+[04/27 19:06:43.096155][debug][712480][VideoSensor.cpp:427] OB_SENSOR_COLOR Streaming... frameRate=30.007948fps
+[04/27 19:06:43.739526][debug][712487][Pipeline.cpp:323] Pipeline streaming... frameset output rate=29.994001fps
+[04/27 19:06:48.128207][debug][712480][VideoSensor.cpp:427] OB_SENSOR_COLOR Streaming... frameRate=30.007948fps
+[04/27 19:06:48.740268][debug][712487][Pipeline.cpp:323] Pipeline streaming... frameset output rate=29.994001fps
+[04/27 19:06:53.164357][debug][712480][VideoSensor.cpp:427] OB_SENSOR_COLOR Streaming... frameRate=29.984116fps
+[04/27 19:06:53.774316][debug][712487][Pipeline.cpp:323] Pipeline streaming... frameset output rate=29.996027fps
+[04/27 19:06:58.196474][debug][712480][VideoSensor.cpp:427] OB_SENSOR_COLOR Streaming... frameRate=30.007948fps
+[04/27 19:06:58.775097][debug][712487][Pipeline.cpp:323] Pipeline streaming... frameset output rate=29.994001fps
+[04/27 19:07:03.228598][debug][712480][VideoSensor.cpp:427] OB_SENSOR_COLOR Streaming... frameRate=30.007948fps
+[04/27 19:07:03.809169][debug][712487][Pipeline.cpp:323] Pipeline streaming... frameset output rate=29.996027fps
+[04/27 19:07:08.260681][debug][712480][VideoSensor.cpp:427] OB_SENSOR_COLOR Streaming... frameRate=30.007948fps
+[04/27 19:07:08.810040][debug][712487][Pipeline.cpp:323] Pipeline streaming... frameset output rate=29.994001fps
+[04/27 19:07:13.292752][debug][712480][VideoSensor.cpp:427] OB_SENSOR_COLOR Streaming... frameRate=30.007948fps
+[04/27 19:07:13.844060][debug][712487][Pipeline.cpp:323] Pipeline streaming... frameset output rate=29.996027fps
+[04/27 19:07:18.324901][debug][712480][VideoSensor.cpp:427] OB_SENSOR_COLOR Streaming... frameRate=30.007948fps
+[04/27 19:07:18.878066][debug][712487][Pipeline.cpp:323] Pipeline streaming... frameset output rate=29.996027fps
+[04/27 19:07:23.325165][debug][712480][VideoSensor.cpp:427] OB_SENSOR_COLOR Streaming... frameRate=29.994001fps
+[04/27 19:07:23.911933][debug][712487][Pipeline.cpp:323] Pipeline streaming... frameset output rate=30.001987fps
+[04/27 19:07:28.357114][debug][712480][VideoSensor.cpp:427] OB_SENSOR_COLOR Streaming... frameRate=30.007948fps
+[04/27 19:07:28.912920][debug][712487][Pipeline.cpp:323] Pipeline streaming... frameset output rate=29.994001fps
+[04/27 19:07:33.393284][debug][712480][VideoSensor.cpp:427] OB_SENSOR_COLOR Streaming... frameRate=29.984116fps
+[04/27 19:07:33.913759][debug][712487][Pipeline.cpp:323] Pipeline streaming... frameset output rate=29.994001fps
+[04/27 19:07:37.411241][debug][929608][Pipeline.cpp:319] Frame received on pipeline! type=OB_FRAME_DEPTH [**1800 logs in 60008ms, last: 19:07:37.385619**]
+[04/27 19:07:37.439169][debug][929609][Pipeline.cpp:319] Frame received on pipeline! type=OB_FRAME_IR [**1800 logs in 60009ms, last: 19:07:37.414787**]
+[04/27 19:07:38.425377][debug][712480][VideoSensor.cpp:427] OB_SENSOR_COLOR Streaming... frameRate=30.007948fps
+[04/27 19:07:38.914137][debug][712487][Pipeline.cpp:323] Pipeline streaming... frameset output rate=29.994001fps
+[04/27 19:07:39.229257][debug][712494][Pipeline.cpp:319] Frame received on pipeline! type=OB_FRAME_COLOR [**1801 logs in 60026ms**]
+[04/27 19:07:43.457498][debug][712480][VideoSensor.cpp:427] OB_SENSOR_COLOR Streaming... frameRate=30.007948fps
+[04/27 19:07:43.915265][debug][712487][Pipeline.cpp:323] Pipeline streaming... frameset output rate=29.994001fps
+[04/27 19:07:48.489566][debug][712480][VideoSensor.cpp:427] OB_SENSOR_COLOR Streaming... frameRate=30.007948fps
+[04/27 19:07:48.916050][debug][712487][Pipeline.cpp:323] Pipeline streaming... frameset output rate=29.994001fps
+[04/27 19:07:53.521847][debug][712480][VideoSensor.cpp:427] OB_SENSOR_COLOR Streaming... frameRate=30.007948fps
+[04/27 19:07:53.949711][debug][712487][Pipeline.cpp:323] Pipeline streaming... frameset output rate=30.001987fps
+[04/27 19:07:58.522254][debug][712480][VideoSensor.cpp:427] OB_SENSOR_COLOR Streaming... frameRate=29.994001fps
+[04/27 19:07:58.910390][debug][712482][OpenNIDataProcessor.cpp:28] IR: Expected 47339, got 47689
+[04/27 19:07:58.910483][debug][712482][OpenNIFrameProcessor.cpp:88] IR frame is corrupt!
+[04/27 19:07:58.911965][debug][712481][OpenNIDataProcessor.cpp:28] Depth: Expected 39596, got 40014
+[04/27 19:07:58.912036][debug][712481][OpenNIFrameProcessor.cpp:88] Depth frame is corrupt!
+[04/27 19:07:58.912042][debug][712481][OpenNIDataProcessor.cpp:28] Depth: Expected 40017, got 40009
+[04/27 19:07:58.917404][debug][712482][OpenNIPacketProcessor.cpp:32] Read: IR buffer is corrupt. Size is 327420 (!=390400)
+[04/27 19:07:58.919766][debug][712481][OpenNIPacketProcessor.cpp:32] Read: Depth buffer is corrupt. Size is 247860 (!=422400)
+[04/27 19:07:59.016657][debug][712494][Pipeline.cpp:323] Pipeline streaming... frameset output rate=29.800671fps
+[04/27 19:07:59.311903][debug][712481][OpenNIDataProcessor.cpp:28] Depth: Expected 41607, got 41647
+[04/27 19:07:59.311981][debug][712481][OpenNIFrameProcessor.cpp:88] Depth frame is corrupt!
+[04/27 19:07:59.315309][debug][712482][OpenNIDataProcessor.cpp:28] IR: Expected 49193, got 49213
+[04/27 19:07:59.315375][debug][712482][OpenNIFrameProcessor.cpp:88] IR frame is corrupt!
+[04/27 19:07:59.317322][debug][712482][OpenNIPacketProcessor.cpp:32] Read: IR buffer is corrupt. Size is 125460 (!=390400)
+[04/27 19:07:59.318800][debug][712481][OpenNIPacketProcessor.cpp:32] Read: Depth buffer is corrupt. Size is 21420 (!=422400)
+[04/27 19:07:59.830486][debug][712482][FrameBufferManager.cpp:35] New frame buffer allocated=0.373MB, total usage: allocated=15.966MB, max limit=2048.000MB
+[04/27 19:07:59.832248][debug][712481][OpenNIDataProcessor.cpp:28] Depth: Expected 43514, got 43844
+[04/27 19:07:59.832311][debug][712481][OpenNIFrameProcessor.cpp:88] Depth frame is corrupt!
+[04/27 19:07:59.843877][debug][712482][OpenNIDataProcessor.cpp:28] IR: Expected 50945, got 51235
+[04/27 19:07:59.843945][debug][712482][OpenNIFrameProcessor.cpp:88] IR frame is corrupt!
+[04/27 19:07:59.892040][debug][712480][ObUtils.cpp:46] check mjpg end flag failed:data[index]:167,data[index - 1]:175
+[04/27 19:07:59.892142][warning][712480][VideoSensor.cpp:443] This frame will be dropped because jpg format verification failure! @OB_SENSOR_COLOR
+[04/27 19:07:59.899526][debug][712481][OpenNIPacketProcessor.cpp:32] Read: Depth buffer is corrupt. Size is 327420 (!=422400)
+[04/27 19:07:59.899861][debug][712482][OpenNIPacketProcessor.cpp:32] Read: IR buffer is corrupt. Size is 3060 (!=390400)
+[04/27 19:07:59.905295][warning][712494][FormatConverter.cpp:188] Failed to decompress color frame
+[04/27 19:08:03.555334][debug][712480][VideoSensor.cpp:427] OB_SENSOR_COLOR Streaming... frameRate=28.809855fps
+[04/27 19:08:04.023052][debug][712494][Pipeline.cpp:323] Pipeline streaming... frameset output rate=30.357500fps
+[04/27 19:08:08.587476][debug][712480][VideoSensor.cpp:427] OB_SENSOR_COLOR Streaming... frameRate=30.007948fps
+[04/27 19:08:09.024602][debug][712494][Pipeline.cpp:323] Pipeline streaming... frameset output rate=29.994001fps
+[04/27 19:08:13.619520][debug][712480][VideoSensor.cpp:427] OB_SENSOR_COLOR Streaming... frameRate=30.007948fps
+[04/27 19:08:14.058895][debug][712491][Pipeline.cpp:323] Pipeline streaming... frameset output rate=29.996027fps
+[04/27 19:08:18.651633][debug][712480][VideoSensor.cpp:427] OB_SENSOR_COLOR Streaming... frameRate=30.007948fps
+[04/27 19:08:19.091341][debug][712494][Pipeline.cpp:323] Pipeline streaming... frameset output rate=30.001987fps
+[04/27 19:08:23.683785][debug][712480][VideoSensor.cpp:427] OB_SENSOR_COLOR Streaming... frameRate=30.007948fps
+[04/27 19:08:24.124128][debug][712491][Pipeline.cpp:323] Pipeline streaming... frameset output rate=30.001987fps
+[04/27 19:08:28.684289][debug][712480][VideoSensor.cpp:427] OB_SENSOR_COLOR Streaming... frameRate=29.994001fps
+[04/27 19:08:29.125580][debug][712491][Pipeline.cpp:323] Pipeline streaming... frameset output rate=29.994001fps
+[04/27 19:08:33.716050][debug][712480][VideoSensor.cpp:427] OB_SENSOR_COLOR Streaming... frameRate=30.007948fps
+[04/27 19:08:34.158871][debug][712491][Pipeline.cpp:323] Pipeline streaming... frameset output rate=30.001987fps
+[04/27 19:08:37.418497][debug][931926][Pipeline.cpp:319] Frame received on pipeline! type=OB_FRAME_DEPTH [**1791 logs in 60007ms, last: 19:08:37.392960**]
+[04/27 19:08:37.447917][debug][931927][Pipeline.cpp:319] Frame received on pipeline! type=OB_FRAME_IR [**1792 logs in 60008ms, last: 19:08:37.422781**]
+[04/27 19:08:38.752091][debug][712480][VideoSensor.cpp:427] OB_SENSOR_COLOR Streaming... frameRate=29.984116fps
+[04/27 19:08:39.159581][debug][712491][Pipeline.cpp:323] Pipeline streaming... frameset output rate=29.994001fps
+[04/27 19:08:39.256292][debug][712494][Pipeline.cpp:319] Frame received on pipeline! type=OB_FRAME_COLOR [**1793 logs in 60027ms**]
+[04/27 19:08:43.784216][debug][712480][VideoSensor.cpp:427] OB_SENSOR_COLOR Streaming... frameRate=30.007948fps
+[04/27 19:08:44.160416][debug][712491][Pipeline.cpp:323] Pipeline streaming... frameset output rate=29.994001fps
+[04/27 19:08:48.816343][debug][712480][VideoSensor.cpp:427] OB_SENSOR_COLOR Streaming... frameRate=30.007948fps
+[04/27 19:08:49.161540][debug][712491][Pipeline.cpp:323] Pipeline streaming... frameset output rate=29.994001fps
+[04/27 19:08:53.848454][debug][712480][VideoSensor.cpp:427] OB_SENSOR_COLOR Streaming... frameRate=30.007948fps
+[04/27 19:08:54.195986][debug][712491][Pipeline.cpp:323] Pipeline streaming... frameset output rate=29.996027fps
+[04/27 19:08:58.880590][debug][712480][VideoSensor.cpp:427] OB_SENSOR_COLOR Streaming... frameRate=30.007948fps
+[04/27 19:08:59.196400][debug][712491][Pipeline.cpp:323] Pipeline streaming... frameset output rate=29.994001fps
+[04/27 19:09:03.912691][debug][712480][VideoSensor.cpp:427] OB_SENSOR_COLOR Streaming... frameRate=30.007948fps
+[04/27 19:09:04.230317][debug][712491][Pipeline.cpp:323] Pipeline streaming... frameset output rate=29.996027fps
+[04/27 19:09:08.913451][debug][712480][VideoSensor.cpp:427] OB_SENSOR_COLOR Streaming... frameRate=29.994001fps
+[04/27 19:09:09.232819][debug][712491][Pipeline.cpp:323] Pipeline streaming... frameset output rate=29.988007fps
+[04/27 19:09:13.945037][debug][712480][VideoSensor.cpp:427] OB_SENSOR_COLOR Streaming... frameRate=30.007948fps
+[04/27 19:09:14.265303][debug][712491][Pipeline.cpp:323] Pipeline streaming... frameset output rate=30.001987fps
+[04/27 19:09:18.981025][debug][712480][VideoSensor.cpp:427] OB_SENSOR_COLOR Streaming... frameRate=29.990070fps
+[04/27 19:09:19.266114][debug][712491][Pipeline.cpp:323] Pipeline streaming... frameset output rate=29.994001fps
+[04/27 19:09:24.013237][debug][712480][VideoSensor.cpp:427] OB_SENSOR_COLOR Streaming... frameRate=30.001987fps
+[04/27 19:09:24.299667][debug][712491][Pipeline.cpp:323] Pipeline streaming... frameset output rate=30.001987fps
+[04/27 19:09:29.045273][debug][712480][VideoSensor.cpp:427] OB_SENSOR_COLOR Streaming... frameRate=30.007948fps
+[04/27 19:09:29.300453][debug][712491][Pipeline.cpp:323] Pipeline streaming... frameset output rate=29.994001fps
+[04/27 19:09:34.077396][debug][712480][VideoSensor.cpp:427] OB_SENSOR_COLOR Streaming... frameRate=30.007948fps
+[04/27 19:09:34.301722][debug][712491][Pipeline.cpp:323] Pipeline streaming... frameset output rate=29.994001fps
+[04/27 19:09:37.426791][debug][934394][Pipeline.cpp:319] Frame received on pipeline! type=OB_FRAME_DEPTH [**1800 logs in 60008ms, last: 19:09:37.401824**]
+[04/27 19:09:37.459840][debug][934397][Pipeline.cpp:319] Frame received on pipeline! type=OB_FRAME_IR [**1800 logs in 60011ms, last: 19:09:37.431691**]
+[04/27 19:09:39.109526][debug][712480][VideoSensor.cpp:427] OB_SENSOR_COLOR Streaming... frameRate=30.007948fps
+[04/27 19:09:39.281469][debug][712494][Pipeline.cpp:319] Frame received on pipeline! type=OB_FRAME_COLOR [**1801 logs in 60025ms**]
+[04/27 19:09:39.335266][debug][712491][Pipeline.cpp:323] Pipeline streaming... frameset output rate=29.996027fps
+[04/27 19:09:44.141622][debug][712480][VideoSensor.cpp:427] OB_SENSOR_COLOR Streaming... frameRate=30.007948fps
+[04/27 19:09:44.369262][debug][712491][Pipeline.cpp:323] Pipeline streaming... frameset output rate=29.996027fps
+[04/27 19:09:49.177732][debug][712480][VideoSensor.cpp:427] OB_SENSOR_COLOR Streaming... frameRate=29.984116fps
+[04/27 19:09:49.370925][debug][712491][Pipeline.cpp:323] Pipeline streaming... frameset output rate=29.994001fps
+[04/27 19:09:54.209831][debug][712480][VideoSensor.cpp:427] OB_SENSOR_COLOR Streaming... frameRate=30.007948fps
+[04/27 19:09:54.371343][debug][712491][Pipeline.cpp:323] Pipeline streaming... frameset output rate=29.994001fps
+[04/27 19:09:59.241933][debug][712480][VideoSensor.cpp:427] OB_SENSOR_COLOR Streaming... frameRate=30.007948fps
+[04/27 19:09:59.372113][debug][712491][Pipeline.cpp:323] Pipeline streaming... frameset output rate=29.994001fps
+[04/27 19:10:04.242054][debug][712480][VideoSensor.cpp:427] OB_SENSOR_COLOR Streaming... frameRate=29.994001fps
+[04/27 19:10:04.405604][debug][712491][Pipeline.cpp:323] Pipeline streaming... frameset output rate=30.001987fps
+[04/27 19:10:09.274207][debug][712480][VideoSensor.cpp:427] OB_SENSOR_COLOR Streaming... frameRate=30.007948fps
+[04/27 19:10:09.406351][debug][712491][Pipeline.cpp:323] Pipeline streaming... frameset output rate=29.994001fps
+[04/27 19:10:14.306356][debug][712480][VideoSensor.cpp:427] OB_SENSOR_COLOR Streaming... frameRate=30.007948fps
+[04/27 19:10:14.407033][debug][712491][Pipeline.cpp:323] Pipeline streaming... frameset output rate=29.994001fps
+[04/27 19:10:19.307339][debug][712480][VideoSensor.cpp:427] OB_SENSOR_COLOR Streaming... frameRate=29.994001fps
+[04/27 19:10:19.408951][debug][712491][Pipeline.cpp:323] Pipeline streaming... frameset output rate=29.994001fps
+[04/27 19:10:24.338567][debug][712480][VideoSensor.cpp:427] OB_SENSOR_COLOR Streaming... frameRate=30.013912fps
+[04/27 19:10:24.442243][debug][712491][Pipeline.cpp:323] Pipeline streaming... frameset output rate=29.996027fps
+[04/27 19:10:29.370669][debug][712480][VideoSensor.cpp:427] OB_SENSOR_COLOR Streaming... frameRate=30.007948fps
+[04/27 19:10:29.445061][debug][712491][Pipeline.cpp:323] Pipeline streaming... frameset output rate=29.982012fps
+[04/27 19:10:34.402743][debug][712480][VideoSensor.cpp:427] OB_SENSOR_COLOR Streaming... frameRate=30.007948fps
+[04/27 19:10:34.477394][debug][712491][Pipeline.cpp:323] Pipeline streaming... frameset output rate=30.007948fps
+[04/27 19:10:37.436233][debug][936632][Pipeline.cpp:319] Frame received on pipeline! type=OB_FRAME_DEPTH [**1800 logs in 60009ms, last: 19:10:37.410615**]
+[04/27 19:10:37.465247][debug][936633][Pipeline.cpp:319] Frame received on pipeline! type=OB_FRAME_IR [**1800 logs in 60005ms, last: 19:10:37.440503**]
+[04/27 19:10:39.307048][debug][712494][Pipeline.cpp:319] Frame received on pipeline! type=OB_FRAME_COLOR [**1801 logs in 60025ms**]
+[04/27 19:10:39.439015][debug][712480][VideoSensor.cpp:427] OB_SENSOR_COLOR Streaming... frameRate=29.984116fps
+[04/27 19:10:39.510772][debug][712491][Pipeline.cpp:323] Pipeline streaming... frameset output rate=30.001987fps
+[04/27 19:10:44.471015][debug][712480][VideoSensor.cpp:427] OB_SENSOR_COLOR Streaming... frameRate=30.007948fps
+[04/27 19:10:44.511831][debug][712491][Pipeline.cpp:323] Pipeline streaming... frameset output rate=29.994001fps
+[04/27 19:10:49.471131][debug][712480][VideoSensor.cpp:427] OB_SENSOR_COLOR Streaming... frameRate=29.994001fps
+[04/27 19:10:49.514458][debug][712491][Pipeline.cpp:323] Pipeline streaming... frameset output rate=29.982012fps
+[04/27 19:10:54.503236][debug][712480][VideoSensor.cpp:427] OB_SENSOR_COLOR Streaming... frameRate=30.007948fps
+[04/27 19:10:54.549199][debug][712491][Pipeline.cpp:323] Pipeline streaming... frameset output rate=29.990070fps
+[04/27 19:10:58.993430][info][712396][Pipeline.cpp:411] Try to stop pipeline!
+[04/27 19:10:58.993529][info][712396][Pipeline.cpp:383] Try to stop streams!
+[04/27 19:10:58.993559][debug][712396][OpenNIVideoSensor.cpp:784] Shutting down USB IR read thread...
+[04/27 19:10:58.993569][debug][712396][OpenNIUSBLinux.cpp:346] Shutdown read thread...
+[04/27 19:10:58.993859][debug][712482][OpenNIUSBLinux.cpp:218] Cancel request transfer(59)...
+[04/27 19:10:58.998967][warning][712482][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:130, error:Success, number:0 
+[04/27 19:10:58.999175][debug][712482][OpenNIUSBLinux.cpp:218] Cancel request transfer(62)...
+[04/27 19:10:58.999365][debug][712420][RequestLibusb.cpp:21] transfer cancelled!
+[04/27 19:10:59.099503][warning][712482][OpenNIUSBLinux.cpp:245] Endpoint  0x82, Buffer62: Failed waiting on asynch transfer event:OB_EVENT_TIMEOUT
+[04/27 19:10:59.099623][debug][712482][OpenNIDataProcessor.cpp:28] IR: Expected 18243, got 18257
+[04/27 19:10:59.099658][debug][712482][OpenNIFrameProcessor.cpp:88] IR frame is corrupt!
+[04/27 19:10:59.099674][warning][712482][OpenNIUSBLinux.cpp:204] exist(0) read thread(63)
+[04/27 19:10:59.099885][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:130, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.099981][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:130, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.099997][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:130, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.100008][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:130, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.100027][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:130, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.100037][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:130, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.100046][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:130, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.100056][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:130, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.100065][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:130, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.100074][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:130, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.100083][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:130, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.100093][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:130, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.100102][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:130, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.100111][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:130, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.100121][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:130, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.100130][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:130, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.100139][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:130, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.100148][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:130, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.100157][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:130, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.100167][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:130, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.100176][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:130, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.100222][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:130, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.100234][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:130, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.100243][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:130, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.100253][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:130, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.100263][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:130, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.100272][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:130, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.100282][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:130, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.100290][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:130, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.100300][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:130, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.100309][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:130, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.100318][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:130, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.100327][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:130, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.100336][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:130, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.100346][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:130, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.100355][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:130, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.100364][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:130, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.100373][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:130, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.100382][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:130, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.100391][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:130, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.100400][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:130, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.100409][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:130, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.100419][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:130, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.100429][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:130, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.100438][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:130, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.100447][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:130, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.100470][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:130, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.100480][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:130, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.100489][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:130, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.100499][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:130, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.100509][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:130, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.100517][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:130, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.100527][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:130, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.100537][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:130, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.100546][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:130, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.100555][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:130, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.100564][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:130, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.100573][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:130, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.100582][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:130, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.100592][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:130, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.100601][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:130, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.100610][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:130, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.100619][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:130, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.100629][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:130, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.100638][debug][712396][OpenNIUSBLinux.cpp:381] Shutdown read thread end...
+[04/27 19:10:59.100651][debug][712396][OpenNISensorParams.cpp:110] set property Stream0Mode(0)
+[04/27 19:10:59.103609][debug][712396][OpenNISensorParams.cpp:121] Stream0Mode(0)was successfully set.
+[04/27 19:10:59.104698][debug][712396][FrameProcessingBlock.cpp:74] Process thread stoped! N11libobsensor13FrameUnpackerE@0xffff6c02b370 
+[04/27 19:10:59.104780][debug][712396][FrameProcessor.cpp:165] FrameProcessor stoped!
+[04/27 19:10:59.105115][debug][712396][OpenNISensorStreams.cpp:114] Erase FW Stream IR
+[04/27 19:10:59.105181][debug][712396][OpenNISensorStreams.cpp:124] released FW Stream strType
+[04/27 19:10:59.105199][info][712396][OpenNIVideoSensor.cpp:709] OpenNI IR stream stop completed.
+[04/27 19:10:59.105271][info][712396][Pipeline.cpp:396] Sensor stream stopped, sensorType=OB_SENSOR_IR
+[04/27 19:10:59.105317][debug][712396][OpenNIVideoSensor.cpp:784] Shutting down USB Depth read thread...
+[04/27 19:10:59.105328][debug][712396][OpenNIUSBLinux.cpp:346] Shutdown read thread...
+[04/27 19:10:59.208227][debug][712481][OpenNIUSBLinux.cpp:218] Cancel request transfer(61)...
+[04/27 19:10:59.208535][debug][712420][RequestLibusb.cpp:21] transfer cancelled!
+[04/27 19:10:59.308607][warning][712481][OpenNIUSBLinux.cpp:245] Endpoint  0x81, Buffer61: Failed waiting on asynch transfer event:OB_EVENT_TIMEOUT
+[04/27 19:10:59.308705][warning][712481][OpenNIUSBLinux.cpp:204] exist(0) read thread(62)
+[04/27 19:10:59.308848][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:129, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.308926][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:129, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.308946][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:129, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.308958][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:129, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.308968][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:129, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.308986][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:129, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.308996][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:129, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.309006][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:129, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.309015][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:129, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.309024][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:129, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.309033][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:129, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.309042][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:129, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.309051][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:129, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.309060][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:129, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.309070][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:129, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.309079][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:129, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.309088][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:129, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.309096][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:129, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.309105][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:129, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.309114][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:129, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.309123][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:129, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.309133][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:129, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.309142][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:129, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.309192][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:129, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.309203][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:129, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.309212][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:129, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.309221][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:129, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.309230][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:129, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.309239][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:129, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.309248][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:129, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.309257][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:129, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.309266][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:129, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.309275][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:129, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.309284][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:129, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.309294][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:129, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.309303][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:129, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.309312][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:129, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.309321][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:129, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.309329][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:129, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.309390][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:129, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.309405][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:129, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.309415][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:129, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.309456][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:129, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.309469][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:129, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.309478][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:129, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.309487][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:129, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.309497][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:129, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.309506][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:129, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.309515][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:129, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.309542][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:129, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.309552][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:129, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.309561][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:129, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.309570][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:129, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.309579][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:129, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.309588][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:129, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.309596][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:129, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.309605][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:129, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.309614][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:129, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.309623][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:129, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.309631][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:129, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.309640][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:129, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.309650][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:129, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.309658][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:129, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.309667][warning][712396][MessengerLibusb.cpp:82] usb_request_cancel returned error, endpoint:129, error:Inappropriate ioctl for device, number:25 
+[04/27 19:10:59.309676][debug][712396][OpenNIUSBLinux.cpp:381] Shutdown read thread end...
+[04/27 19:10:59.309688][debug][712396][OpenNISensorParams.cpp:110] set property Stream1Mode(0)
+[04/27 19:10:59.311619][debug][712396][OpenNISensorParams.cpp:121] Stream1Mode(0)was successfully set.
+[04/27 19:10:59.311815][debug][712396][FrameProcessingBlock.cpp:74] Process thread stoped! N11libobsensor13FrameUnpackerE@0xffff6c02ab80 
+[04/27 19:10:59.311937][debug][712396][FrameProcessingBlock.cpp:74] Process thread stoped! N11libobsensor15FrameSoftFilterE@0xffff6c02acb0 
+[04/27 19:10:59.312833][debug][712396][FrameProcessingBlock.cpp:74] Process thread stoped! N11libobsensor24Disparity2DepthConverterE@0xffff6c02b010 
+[04/27 19:10:59.312841][debug][712396][FrameProcessor.cpp:165] FrameProcessor stoped!
+[04/27 19:10:59.312908][debug][712396][OpenNISensorStreams.cpp:114] Erase FW Stream Depth
+[04/27 19:10:59.312916][debug][712396][OpenNISensorStreams.cpp:124] released FW Stream strType
+[04/27 19:10:59.312925][info][712396][OpenNIVideoSensor.cpp:709] OpenNI Depth stream stop completed.
+[04/27 19:10:59.312942][info][712396][Pipeline.cpp:396] Sensor stream stopped, sensorType=OB_SENSOR_DEPTH
+[04/27 19:10:59.342990][debug][712396][VideoSensor.cpp:686] VideoSensor::stop, @OB_SENSOR_COLOR
+[04/27 19:10:59.343054][debug][712396][VideoSensor.cpp:709] Stream state changed to STREAM_STATE_STOPPING. @OB_SENSOR_COLOR
+[04/27 19:10:59.343064][debug][712396][ObLibuvcDevicePort.cpp:148] ObLibuvcDevicePort::stopStream()...
+[04/27 19:10:59.404984][debug][712396][ObLibuvcDevicePort.cpp:172] ObLibuvcDevicePort::stopStream() done
+[04/27 19:10:59.405073][debug][712396][VideoSensor.cpp:735] stream stoped! @OB_SENSOR_COLOR
+[04/27 19:10:59.405527][debug][712396][FrameProcessingBlock.cpp:74] Process thread stoped! N11libobsensor15FormatConverterE@0xffff6c0320f0 
+[04/27 19:10:59.405543][debug][712396][FrameProcessor.cpp:165] FrameProcessor stoped!
+[04/27 19:10:59.405628][debug][712396][VideoSensor.cpp:724] Stream state changed to STREAM_STATE_STOPED. @OB_SENSOR_COLOR
+[04/27 19:10:59.405643][info][712396][VideoSensor.cpp:742] Video sensor stopped, @OB_SENSOR_COLOR
+[04/27 19:10:59.405653][info][712396][Pipeline.cpp:396] Sensor stream stopped, sensorType=OB_SENSOR_COLOR
+[04/27 19:10:59.405661][info][712396][Pipeline.cpp:402] Stop streams done!
+[04/27 19:10:59.405739][debug][712396][OpenNISensorParams.cpp:110] set property Registration(0)
+[04/27 19:10:59.409563][debug][712396][OpenNISensorParams.cpp:121] Registration(0)was successfully set.
+[04/27 19:10:59.409638][debug][712396][PropertyAccessor.cpp:17] set property value success! propertyId: 42, value: {intValue: 0, floatValue: 0}
+[04/27 19:10:59.409672][debug][712396][FrameProcessingBlockManager.cpp:84] FrameProcessingBlockManager stoped!
+[04/27 19:10:59.409677][debug][712396][FrameProcessingBlockManager.cpp:20] Processing block list cleared!
+[04/27 19:10:59.409682][info][712396][Pipeline.cpp:443] Stop pipeline done!
+[04/27 19:10:59.545507][debug][712396][Pipeline.cpp:68] Pipeline deInit start!
+[04/27 19:10:59.545583][info][712396][Pipeline.cpp:75] Pipeline destroyed! @0xFFFF6C30D230
+[04/27 19:10:59.548614][info][712396][OpenNIDevice.cpp:44] OpenNI device destroyed! PID: 0x060f, SN: ACRMB4300CE
+[04/27 19:10:59.548698][info][712396][OpenNIVideoSensor.cpp:1021] OpenNIVideoSensor destroyed! sensorType=OB_SENSOR_IR
+[04/27 19:10:59.548726][debug][712396][VideoSensor.cpp:282] VideoSensor::~VideoSensor(), @OB_SENSOR_COLOR
+[04/27 19:10:59.548738][info][712396][VideoSensor.cpp:303] VideoSensor destroyed, @OB_SENSOR_COLOR
+[04/27 19:10:59.548984][info][712396][OpenNIVideoSensor.cpp:1021] OpenNIVideoSensor destroyed! sensorType=OB_SENSOR_DEPTH
+[04/27 19:10:59.549030][debug][712396][FrameProcessor.cpp:807] try remove eventId: PropertyValueUpdate
+[04/27 19:10:59.549364][debug][712396][FrameProcessor.cpp:807] try remove eventId: DepthStreamProfileChanged
+[04/27 19:10:59.549395][debug][712396][FrameProcessor.cpp:111] FrameProcessor destroyed! @281472493857312
+[04/27 19:10:59.549596][debug][712396][FrameProcessor.cpp:111] FrameProcessor destroyed! @281472493882624
+[04/27 19:10:59.549619][debug][712396][ObLibuvcDevicePort.cpp:63] ~ObLibuvcDevicePort
+[04/27 19:10:59.565810][info][712396][ObLibuvcDevicePort.cpp:70] uvc_close done.
+[04/27 19:10:59.565852][info][712396][ObLibuvcDevicePort.cpp:71] ~ObLibuvcDevicePort done
+[04/27 19:10:59.566273][debug][712396][FrameProcessor.cpp:111] FrameProcessor destroyed! @281472493857136
+[04/27 19:10:59.566534][debug][712396][VendorCommand.cpp:213] destructor ffff6c003a40
+[04/27 19:10:59.566589][debug][712396][VendorCommand.cpp:468] disableHeartBeat heartBeatHelper_: 0
+[04/27 19:10:59.566605][debug][712396][HostProtocol.cpp:140] ~HostProtocol()
+[04/27 19:10:59.566969][debug][712428][HostProtocol.cpp:168] emitTranDataFutureSignalThread_ finish
+[04/27 19:10:59.567337][debug][712396][Context.cpp:81] Context destroying ...
+[04/27 19:10:59.567369][debug][712396][DeviceManager.cpp:56] DeviceManager destroy ...
+[04/27 19:10:59.567379][debug][712396][DeviceManager.cpp:64] DeviceManager Destructors done
+[04/27 19:10:59.570274][debug][712396][FrameBufferManager.hpp:72] FrameBufferManager destroying...! frame type: N11libobsensor11PointsFrameE,  obj addr:0xffff34000c00
+[04/27 19:10:59.573139][debug][712396][FrameBufferManager.cpp:54] Frame buffer released=3.516MB, total usage: allocated=12.450MB, max limit=2048.000MB
+[04/27 19:10:59.573167][debug][712396][FrameBufferManager.cpp:69] AbstractFrameBufferManager destroyed! manager type:N11libobsensor26AbstractFrameBufferManagerE,  obj addr:0xffff34000c00
+[04/27 19:10:59.573213][debug][712396][FrameBufferManager.hpp:72] FrameBufferManager destroying...! frame type: N11libobsensor8FrameSetE,  obj addr:0xffff6ca8ada0
+[04/27 19:10:59.573227][debug][712396][FrameBufferManager.cpp:54] Frame buffer released=0.000MB, total usage: allocated=12.450MB, max limit=2048.000MB
+[04/27 19:10:59.573237][debug][712396][FrameBufferManager.cpp:54] Frame buffer released=0.000MB, total usage: allocated=12.449MB, max limit=2048.000MB
+[04/27 19:10:59.573244][debug][712396][FrameBufferManager.cpp:69] AbstractFrameBufferManager destroyed! manager type:N11libobsensor26AbstractFrameBufferManagerE,  obj addr:0xffff6ca8ada0
+[04/27 19:10:59.573255][debug][712396][FrameBufferManager.hpp:72] FrameBufferManager destroying...! frame type: N11libobsensor10DepthFrameE,  obj addr:0xffff58000b70
+[04/27 19:10:59.573348][debug][712396][FrameBufferManager.cpp:54] Frame buffer released=0.586MB, total usage: allocated=11.863MB, max limit=2048.000MB
+[04/27 19:10:59.573512][debug][712396][FrameBufferManager.cpp:54] Frame buffer released=0.586MB, total usage: allocated=11.276MB, max limit=2048.000MB
+[04/27 19:10:59.573634][debug][712396][FrameBufferManager.cpp:54] Frame buffer released=0.586MB, total usage: allocated=10.690MB, max limit=2048.000MB
+[04/27 19:10:59.573778][debug][712396][FrameBufferManager.cpp:54] Frame buffer released=0.586MB, total usage: allocated=10.104MB, max limit=2048.000MB
+[04/27 19:10:59.573918][debug][712396][FrameBufferManager.cpp:54] Frame buffer released=0.586MB, total usage: allocated=9.517MB, max limit=2048.000MB
+[04/27 19:10:59.574150][debug][712396][FrameBufferManager.cpp:54] Frame buffer released=0.586MB, total usage: allocated=8.931MB, max limit=2048.000MB
+[04/27 19:10:59.574162][debug][712396][FrameBufferManager.cpp:69] AbstractFrameBufferManager destroyed! manager type:N11libobsensor26AbstractFrameBufferManagerE,  obj addr:0xffff58000b70
+[04/27 19:10:59.574172][debug][712396][FrameBufferManager.hpp:72] FrameBufferManager destroying...! frame type: N11libobsensor10DepthFrameE,  obj addr:0xffff6ca8ac40
+[04/27 19:10:59.574224][debug][712396][FrameBufferManager.cpp:54] Frame buffer released=0.403MB, total usage: allocated=8.528MB, max limit=2048.000MB
+[04/27 19:10:59.574232][debug][712396][FrameBufferManager.cpp:69] AbstractFrameBufferManager destroyed! manager type:N11libobsensor26AbstractFrameBufferManagerE,  obj addr:0xffff6ca8ac40
+[04/27 19:10:59.574241][debug][712396][FrameBufferManager.hpp:72] FrameBufferManager destroying...! frame type: N11libobsensor10ColorFrameE,  obj addr:0xffff3c000b70
+[04/27 19:10:59.574554][debug][712396][FrameBufferManager.cpp:54] Frame buffer released=0.879MB, total usage: allocated=7.648MB, max limit=2048.000MB
+[04/27 19:10:59.574939][debug][712396][FrameBufferManager.cpp:54] Frame buffer released=0.879MB, total usage: allocated=6.769MB, max limit=2048.000MB
+[04/27 19:10:59.575213][debug][712396][FrameBufferManager.cpp:54] Frame buffer released=0.879MB, total usage: allocated=5.890MB, max limit=2048.000MB
+[04/27 19:10:59.575548][debug][712396][FrameBufferManager.cpp:54] Frame buffer released=0.879MB, total usage: allocated=5.010MB, max limit=2048.000MB
+[04/27 19:10:59.575561][debug][712396][FrameBufferManager.cpp:69] AbstractFrameBufferManager destroyed! manager type:N11libobsensor26AbstractFrameBufferManagerE,  obj addr:0xffff3c000b70
+[04/27 19:10:59.575571][debug][712396][FrameBufferManager.hpp:72] FrameBufferManager destroying...! frame type: N11libobsensor10ColorFrameE,  obj addr:0xffff6c30e0f0
+[04/27 19:10:59.575619][debug][712396][FrameBufferManager.cpp:54] Frame buffer released=0.293MB, total usage: allocated=4.717MB, max limit=2048.000MB
+[04/27 19:10:59.575686][debug][712396][FrameBufferManager.cpp:54] Frame buffer released=0.293MB, total usage: allocated=4.423MB, max limit=2048.000MB
+[04/27 19:10:59.575737][debug][712396][FrameBufferManager.cpp:54] Frame buffer released=0.293MB, total usage: allocated=4.130MB, max limit=2048.000MB
+[04/27 19:10:59.575783][debug][712396][FrameBufferManager.cpp:54] Frame buffer released=0.293MB, total usage: allocated=3.837MB, max limit=2048.000MB
+[04/27 19:10:59.575815][debug][712396][FrameBufferManager.cpp:69] AbstractFrameBufferManager destroyed! manager type:N11libobsensor26AbstractFrameBufferManagerE,  obj addr:0xffff6c30e0f0
+[04/27 19:10:59.575826][debug][712396][FrameBufferManager.hpp:72] FrameBufferManager destroying...! frame type: N11libobsensor7IRFrameE,  obj addr:0xffff6cc42400
+[04/27 19:10:59.575840][debug][712396][FrameBufferManager.cpp:54] Frame buffer released=0.586MB, total usage: allocated=3.250MB, max limit=2048.000MB
+[04/27 19:10:59.575909][debug][712396][FrameBufferManager.cpp:54] Frame buffer released=0.586MB, total usage: allocated=2.664MB, max limit=2048.000MB
+[04/27 19:10:59.576095][debug][712396][FrameBufferManager.cpp:54] Frame buffer released=0.586MB, total usage: allocated=2.077MB, max limit=2048.000MB
+[04/27 19:10:59.576204][debug][712396][FrameBufferManager.cpp:54] Frame buffer released=0.586MB, total usage: allocated=1.491MB, max limit=2048.000MB
+[04/27 19:10:59.576213][debug][712396][FrameBufferManager.cpp:69] AbstractFrameBufferManager destroyed! manager type:N11libobsensor26AbstractFrameBufferManagerE,  obj addr:0xffff6cc42400
+[04/27 19:10:59.576222][debug][712396][FrameBufferManager.hpp:72] FrameBufferManager destroying...! frame type: N11libobsensor7IRFrameE,  obj addr:0xffff6cb31cc0
+[04/27 19:10:59.576341][debug][712396][FrameBufferManager.cpp:54] Frame buffer released=0.373MB, total usage: allocated=1.118MB, max limit=2048.000MB
+[04/27 19:10:59.576505][debug][712396][FrameBufferManager.cpp:54] Frame buffer released=0.373MB, total usage: allocated=0.746MB, max limit=2048.000MB
+[04/27 19:10:59.576532][debug][712396][FrameBufferManager.cpp:54] Frame buffer released=0.373MB, total usage: allocated=0.373MB, max limit=2048.000MB
+[04/27 19:10:59.576693][debug][712396][FrameBufferManager.cpp:54] Frame buffer released=0.373MB, total usage: allocated=0.000MB, max limit=2048.000MB
+[04/27 19:10:59.576704][debug][712396][FrameBufferManager.cpp:69] AbstractFrameBufferManager destroyed! manager type:N11libobsensor26AbstractFrameBufferManagerE,  obj addr:0xffff6cb31cc0
+[04/27 19:10:59.576713][info][712396][Context.cpp:84] Context destroyed
+[04/27 19:10:59.576892][debug][938862][Pipeline.cpp:319] Frame received on pipeline! type=OB_FRAME_IR [**646 logs in 22111ms, last: 19:10:58.977185**]
+[04/27 19:10:59.577296][debug][938934][Pipeline.cpp:319] Frame received on pipeline! type=OB_FRAME_COLOR [**601 logs in 20270ms, last: 19:10:59.344873**]
+[04/27 19:10:59.577521][debug][938861][Pipeline.cpp:319] Frame received on pipeline! type=OB_FRAME_DEPTH [**650 logs in 22141ms, last: 19:10:59.082821**]
