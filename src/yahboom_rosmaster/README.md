@@ -26,7 +26,7 @@ colcon build --base-paths src --packages-select \
   gemini_robotics_bridge \
   gemini_pick_place_executor \
   --symlink-install
-source install/setup.bash
+source install/setup.zsh
 ```
 
 Use `--base-paths src` so `colcon` does not scan a workspace-local `venv/`.
@@ -41,7 +41,7 @@ export GEMINI_API_KEY="your_api_key_here"
 ### Start the required nodes
 
 Start the camera/perception stack first, including
-`x3plus_moveit_config/scripts/perception_bridge.py`, so these topics exist:
+`ros2 launch x3plus_moveit_config gazebo_moveit.launch.py `
 
 ```bash
 /perception_bridge/debug_image
@@ -52,7 +52,7 @@ Start the camera/perception stack first, including
 Then start the Gemini service:
 
 ```bash
-source install/setup.bash
+source install/setup.zsh
 export GEMINI_API_KEY="your_api_key_here"
 ros2 run gemini_robotics_bridge gemini_robotics_bridge.py
 ```
@@ -60,7 +60,7 @@ ros2 run gemini_robotics_bridge gemini_robotics_bridge.py
 In another terminal, run the debug executor:
 
 ```bash
-source install/setup.bash
+source install/setup.zsh
 ros2 run gemini_pick_place_executor gemini_pick_place_executor.py
 ```
 
