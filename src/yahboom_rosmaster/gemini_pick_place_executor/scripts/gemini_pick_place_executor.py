@@ -6,8 +6,9 @@ import threading
 import time
 from copy import deepcopy
 
-from geometry_msgs.msg import PointStamped, PoseStamped
+from geometry_msgs.msg import PointStamped, PoseStamped, TwistStamped
 from moveit_msgs.msg import Constraints, OrientationConstraint, PositionConstraint
+from nav_msgs.msg import Odometry
 from sensor_msgs.msg import Image
 from shape_msgs.msg import SolidPrimitive
 from std_msgs.msg import ColorRGBA
@@ -138,17 +139,39 @@ class GeminiPickPlaceExecutor(Node):
         self.declare_parameter("orientation_z_tol_rad", 3.14)
         self.declare_parameter("ik_timeout_sec", 2.0)
         self.declare_parameter("approach_pitch_below_rad", 1.0472)  # ~60 deg below horizontal
+        self.declare_parameter("enable_base_drive", True)
+        self.declare_parameter("cmd_vel_topic", "mecanum_drive_controller/cmd_vel")
+        self.declare_parameter("odom_topic", "mecanum_drive_controller/odom")
+        self.declare_parameter("sweet_x", 0.18)
+        self.declare_parameter("sweet_y", 0.0)
+        self.declare_parameter("reach_window_x_min", 0.10)
+        self.declare_parameter("reach_window_x_max", 0.25)
+        self.declare_parameter("reach_window_y_half", 0.05)
+        self.declare_parameter("drive_max_lin_speed_mps", 0.10)
+        self.declare_parameter("drive_kp", 1.5)
+        self.declare_parameter("drive_position_tol_m", 0.01)
+        self.declare_parameter("drive_timeout_sec", 15.0)
+        self.declare_parameter("drive_settle_sec", 0.3)
+        self.declare_parameter("return_after_place", True)
+        self.declare_parameter("stow_joint_values", [-1.5708, 1.0, -0.5, 0.0, 0.0])
+        self.declare_parameter("stow_for_perception", True)
+        self.declare_parameter("restow_after_place", True)
+        self.declare_parameter("stow_settle_sec", 0.3)
 
         self.latest_image = None
         self.latest_base_point = None
         self.base_point_event = threading.Event()
         self.worker_started = False
         self.worker_lock = threading.Lock()
+        self.latest_odom = None
+        self.odom_event = threading.Event()
 
         image_topic = self.get_parameter("image_topic").value
         pixel_topic = self.get_parameter("pixel_topic").value
         base_point_topic = self.get_parameter("base_point_topic").value
         marker_topic = self.get_parameter("marker_topic").value
+        cmd_vel_topic = self.get_parameter("cmd_vel_topic").value
+        odom_topic = self.get_parameter("odom_topic").value
 
         self.image_sub = self.create_subscription(Image, image_topic, self.image_callback, 10)
         self.base_point_sub = self.create_subscription(
@@ -165,12 +188,16 @@ class GeminiPickPlaceExecutor(Node):
         self.gemini_client = self.create_client(
             GeminiPickPlace, self.get_parameter("gemini_service").value
         )
+        self.cmd_vel_pub = self.create_publisher(TwistStamped, cmd_vel_topic, 10)
+        self.odom_sub = self.create_subscription(Odometry, odom_topic, self.odom_callback, 10)
         self.start_timer = self.create_timer(0.5, self.maybe_start)
 
         self.moveit = None
         self.arm_component = None
         self.gripper_component = None
-        if bool(self.get_parameter("execute").value):
+        execute_param = bool(self.get_parameter("execute").value)
+        stow_param = bool(self.get_parameter("stow_for_perception").value)
+        if execute_param or stow_param:
             self.init_moveit()
 
         self.get_logger().info(
@@ -204,6 +231,10 @@ class GeminiPickPlaceExecutor(Node):
         self.latest_base_point = msg
         self.base_point_event.set()
 
+    def odom_callback(self, msg):
+        self.latest_odom = msg
+        self.odom_event.set()
+
     def maybe_start(self):
         if not bool(self.get_parameter("auto_start").value):
             return
@@ -216,28 +247,71 @@ class GeminiPickPlaceExecutor(Node):
         threading.Thread(target=self.run_once, daemon=True).start()
 
     def run_once(self):
+        execute = bool(self.get_parameter("execute").value)
+        drive_enabled = bool(self.get_parameter("enable_base_drive").value)
+        stow_for_perception = bool(self.get_parameter("stow_for_perception").value)
+
+        if stow_for_perception and self.moveit is not None:
+            if not self.plan_and_execute_stow("00_stow_for_perception"):
+                self.get_logger().error("could not stow arm; aborting")
+                return
+
+        perceived = self.perceive_targets()
+        if perceived is None:
+            return
+        image, plan, target_point, destination_point = perceived
+
+        initial_odom = None
+        if execute and drive_enabled and self.target_outside_reach_window(target_point):
+            initial_odom = self.snapshot_odom()
+            if initial_odom is None or not self.drive_to_reach(target_point):
+                self.get_logger().error("base drive failed; aborting")
+                return
+            perceived = self.perceive_targets()
+            if perceived is None:
+                return
+            image, plan, target_point, destination_point = perceived
+
+        self.publish_debug_markers(target_point, destination_point)
+        self.log_candidate_summary(plan, target_point, destination_point)
+
+        if execute:
+            grasp_width = self.measure_grasp_width(plan, image)
+            success = self.execute_pick_place(target_point, destination_point, grasp_width)
+            if success:
+                self.get_logger().info("Pick-and-place sequence completed")
+            else:
+                self.get_logger().error("Pick-and-place sequence aborted")
+            if success and initial_odom is not None and bool(
+                self.get_parameter("return_after_place").value
+            ):
+                self.drive_back_to(initial_odom)
+            if success and bool(self.get_parameter("restow_after_place").value):
+                self.plan_and_execute_stow("end_stow")
+
+    def perceive_targets(self):
         image = deepcopy(self.latest_image)
         if image is None:
             self.get_logger().warn("No image available")
-            return
+            return None
 
         task = self.get_parameter("task").value
         result = self.call_gemini(task, image)
         if result is None:
-            return
+            return None
 
         if not result["response"].accepted:
             self.get_logger().warn(
                 "Gemini response was valid but not accepted: "
                 f"{result['response'].error_message}"
             )
-            return
+            return None
 
         try:
             plan = json.loads(result["response"].result_json)
         except json.JSONDecodeError as exc:
             self.get_logger().error(f"Could not parse accepted Gemini JSON: {exc}")
-            return
+            return None
 
         target_pixel = normalized_point_to_pixel(
             plan["target_object"]["point"], image.width, image.height
@@ -253,23 +327,14 @@ class GeminiPickPlaceExecutor(Node):
         )
         target_point = self.project_pixel("target", target_pixel, image.header.frame_id)
         if target_point is None:
-            return
+            return None
         destination_point = self.project_pixel(
             "destination", destination_pixel, image.header.frame_id
         )
         if destination_point is None:
-            return
+            return None
 
-        self.publish_debug_markers(target_point, destination_point)
-        self.log_candidate_summary(plan, target_point, destination_point)
-
-        if bool(self.get_parameter("execute").value):
-            grasp_width = self.measure_grasp_width(plan, image)
-            success = self.execute_pick_place(target_point, destination_point, grasp_width)
-            if success:
-                self.get_logger().info("Pick-and-place sequence completed")
-            else:
-                self.get_logger().error("Pick-and-place sequence aborted")
+        return image, plan, target_point, destination_point
 
     def measure_grasp_width(self, plan, image):
         default_w = float(self.get_parameter("default_grasp_width_m").value)
@@ -576,6 +641,177 @@ class GeminiPickPlaceExecutor(Node):
         self.gripper_component.set_start_state_to_current_state()
         self.gripper_component.set_goal_state(configuration_name=str(name))
         return self.plan_and_execute(self.gripper_component, gripper_name, label)
+
+    def plan_and_execute_stow(self, label):
+        if self.arm_component is None or self.moveit is None:
+            self.get_logger().warn(f"[{label}] MoveItPy not initialized; cannot stow")
+            return False
+        values_param = self.get_parameter("stow_joint_values").value
+        try:
+            values = [float(v) for v in values_param]
+        except Exception as exc:
+            self.get_logger().error(f"[{label}] invalid stow_joint_values: {exc}")
+            return False
+        if len(values) != 5:
+            self.get_logger().error(
+                f"[{label}] stow_joint_values must have 5 entries, got {len(values)}"
+            )
+            return False
+        joint_values = {
+            "arm_joint1": values[0],
+            "arm_joint2": values[1],
+            "arm_joint3": values[2],
+            "arm_joint4": values[3],
+            "arm_joint5": values[4],
+        }
+        arm_name = str(self.get_parameter("arm_group_name").value)
+        self.arm_component.set_start_state_to_current_state()
+        self.arm_component.set_goal_state(joint_values=joint_values)
+        ok = self.plan_and_execute(self.arm_component, arm_name, label)
+        if ok:
+            settle = float(self.get_parameter("stow_settle_sec").value)
+            if settle > 0.0:
+                time.sleep(settle)
+        return ok
+
+    def target_outside_reach_window(self, point):
+        x = float(point.point.x)
+        y = float(point.point.y)
+        x_min = float(self.get_parameter("reach_window_x_min").value)
+        x_max = float(self.get_parameter("reach_window_x_max").value)
+        y_half = float(self.get_parameter("reach_window_y_half").value)
+        outside = x < x_min or x > x_max or abs(y) > y_half
+        self.get_logger().info(
+            f"reach window check: target=({x:.3f},{y:.3f}) "
+            f"window x=[{x_min:.3f},{x_max:.3f}] |y|<={y_half:.3f} -> "
+            f"{'outside' if outside else 'inside'}"
+        )
+        return outside
+
+    def snapshot_odom(self):
+        if not self.odom_event.wait(timeout=2.0):
+            self.get_logger().error("timed out waiting for odometry message")
+            return None
+        msg = self.latest_odom
+        if msg is None:
+            return None
+        x = float(msg.pose.pose.position.x)
+        y = float(msg.pose.pose.position.y)
+        qx = float(msg.pose.pose.orientation.x)
+        qy = float(msg.pose.pose.orientation.y)
+        qz = float(msg.pose.pose.orientation.z)
+        qw = float(msg.pose.pose.orientation.w)
+        yaw = math.atan2(2.0 * (qw * qz + qx * qy), 1.0 - 2.0 * (qy * qy + qz * qz))
+        return {"x": x, "y": y, "yaw": yaw}
+
+    def publish_zero_velocity(self):
+        msg = TwistStamped()
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.header.frame_id = "base_link"
+        self.cmd_vel_pub.publish(msg)
+
+    def drive_to_reach(self, target_point):
+        sweet_x = float(self.get_parameter("sweet_x").value)
+        sweet_y = float(self.get_parameter("sweet_y").value)
+        dx = float(target_point.point.x) - sweet_x
+        dy = float(target_point.point.y) - sweet_y
+        self.get_logger().info(
+            f"drive_to_reach: target=({target_point.point.x:.3f},{target_point.point.y:.3f}) "
+            f"sweet=({sweet_x:.3f},{sweet_y:.3f}) -> dx={dx:.3f} dy={dy:.3f}"
+        )
+        return self.drive_relative_base(dx, dy)
+
+    def drive_relative_base(self, dx_base, dy_base):
+        odom0 = self.snapshot_odom()
+        if odom0 is None:
+            return False
+        x0 = odom0["x"]
+        y0 = odom0["y"]
+        yaw0 = odom0["yaw"]
+
+        # Convert base-frame displacement to world-frame goal.
+        c0 = math.cos(yaw0)
+        s0 = math.sin(yaw0)
+        goal_x_w = x0 + (dx_base * c0 - dy_base * s0)
+        goal_y_w = y0 + (dx_base * s0 + dy_base * c0)
+
+        kp = float(self.get_parameter("drive_kp").value)
+        max_speed = float(self.get_parameter("drive_max_lin_speed_mps").value)
+        tol = float(self.get_parameter("drive_position_tol_m").value)
+        timeout = float(self.get_parameter("drive_timeout_sec").value)
+        period = 0.05  # 20 Hz
+
+        deadline = self.get_clock().now().nanoseconds / 1e9 + timeout
+        while rclpy.ok():
+            now = self.get_clock().now().nanoseconds / 1e9
+            if now > deadline:
+                self.get_logger().error("drive_relative_base: timeout")
+                self.publish_zero_velocity()
+                return False
+            cur = self.latest_odom
+            if cur is None:
+                time.sleep(period)
+                continue
+            cx = float(cur.pose.pose.position.x)
+            cy = float(cur.pose.pose.position.y)
+            cqx = float(cur.pose.pose.orientation.x)
+            cqy = float(cur.pose.pose.orientation.y)
+            cqz = float(cur.pose.pose.orientation.z)
+            cqw = float(cur.pose.pose.orientation.w)
+            cyaw = math.atan2(
+                2.0 * (cqw * cqz + cqx * cqy),
+                1.0 - 2.0 * (cqy * cqy + cqz * cqz),
+            )
+
+            err_x_w = goal_x_w - cx
+            err_y_w = goal_y_w - cy
+            err_norm = math.sqrt(err_x_w * err_x_w + err_y_w * err_y_w)
+            if err_norm < tol:
+                self.publish_zero_velocity()
+                settle = float(self.get_parameter("drive_settle_sec").value)
+                if settle > 0.0:
+                    time.sleep(settle)
+                self.get_logger().info(
+                    f"drive_relative_base: arrived (err={err_norm:.4f} m)"
+                )
+                return True
+
+            # Rotate world-frame error into the current base frame.
+            cc = math.cos(cyaw)
+            ss = math.sin(cyaw)
+            err_x_base = cc * err_x_w + ss * err_y_w
+            err_y_base = -ss * err_x_w + cc * err_y_w
+
+            vx = max(-max_speed, min(max_speed, kp * err_x_base))
+            vy = max(-max_speed, min(max_speed, kp * err_y_base))
+
+            twist = TwistStamped()
+            twist.header.stamp = self.get_clock().now().to_msg()
+            twist.header.frame_id = "base_link"
+            twist.twist.linear.x = vx
+            twist.twist.linear.y = vy
+            self.cmd_vel_pub.publish(twist)
+            time.sleep(period)
+        self.publish_zero_velocity()
+        return False
+
+    def drive_back_to(self, initial_odom):
+        if initial_odom is None:
+            return False
+        cur = self.snapshot_odom()
+        if cur is None:
+            return False
+        # World-frame error is initial - current; convert to base-frame for drive_relative_base.
+        err_x_w = initial_odom["x"] - cur["x"]
+        err_y_w = initial_odom["y"] - cur["y"]
+        cc = math.cos(cur["yaw"])
+        ss = math.sin(cur["yaw"])
+        dx_base = cc * err_x_w + ss * err_y_w
+        dy_base = -ss * err_x_w + cc * err_y_w
+        self.get_logger().info(
+            f"drive_back_to: returning by base-frame ({dx_base:.3f},{dy_base:.3f})"
+        )
+        return self.drive_relative_base(dx_base, dy_base)
 
     def plan_and_execute_gripper_value(self, grip_joint_rad, label):
         if self.gripper_component is None or self.moveit is None:
