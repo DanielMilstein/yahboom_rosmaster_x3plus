@@ -646,6 +646,8 @@ class GeminiPickPlaceExecutor(Node):
         if self.arm_component is None or self.moveit is None:
             self.get_logger().warn(f"[{label}] MoveItPy not initialized; cannot stow")
             return False
+        from moveit.core.robot_state import RobotState
+
         values_param = self.get_parameter("stow_joint_values").value
         try:
             values = [float(v) for v in values_param]
@@ -657,16 +659,12 @@ class GeminiPickPlaceExecutor(Node):
                 f"[{label}] stow_joint_values must have 5 entries, got {len(values)}"
             )
             return False
-        joint_values = {
-            "arm_joint1": values[0],
-            "arm_joint2": values[1],
-            "arm_joint3": values[2],
-            "arm_joint4": values[3],
-            "arm_joint5": values[4],
-        }
         arm_name = str(self.get_parameter("arm_group_name").value)
+        robot_model = self.moveit.get_robot_model()
+        state = RobotState(robot_model)
+        state.set_joint_group_positions(arm_name, values)
         self.arm_component.set_start_state_to_current_state()
-        self.arm_component.set_goal_state(joint_values=joint_values)
+        self.arm_component.set_goal_state(robot_state=state)
         ok = self.plan_and_execute(self.arm_component, arm_name, label)
         if ok:
             settle = float(self.get_parameter("stow_settle_sec").value)
