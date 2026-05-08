@@ -1,3 +1,6 @@
+import os
+
+from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration
@@ -10,6 +13,12 @@ def generate_launch_description():
     use_sim_time = LaunchConfiguration("use_sim_time")
     task = LaunchConfiguration("task")
 
+    moveit_cpp_yaml = os.path.join(
+        get_package_share_directory("gemini_pick_place_executor"),
+        "config",
+        "moveit_cpp.yaml",
+    )
+
     moveit_config = (
         MoveItConfigsBuilder("rosmaster_x3_plus", package_name="x3plus_moveit_config")
         .robot_description(
@@ -18,6 +27,7 @@ def generate_launch_description():
                 "use_gazebo": "true",
             }
         )
+        .moveit_cpp(file_path=moveit_cpp_yaml)
         .to_moveit_configs()
     )
 
