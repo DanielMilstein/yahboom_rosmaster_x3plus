@@ -9,12 +9,18 @@
 
   <buildtool_depend>ament_cmake</buildtool_depend>
 
-  <exec_depend>geometry_msgs</exec_depend>
+  <depend>geometry_msgs</depend>
+  <depend>moveit_ros_planning_interface</depend>
+  <depend>moveit_msgs</depend>
+  <depend>rclcpp</depend>
+  <depend>rclcpp_action</depend>
+  <depend>shape_msgs</depend>
+  <depend>yahboom_rosmaster_msgs</depend>
+
   <exec_depend>rclpy</exec_depend>
   <exec_depend>sensor_msgs</exec_depend>
   <exec_depend>std_msgs</exec_depend>
   <exec_depend>visualization_msgs</exec_depend>
-  <exec_depend>yahboom_rosmaster_msgs</exec_depend>
 
   <test_depend>ament_lint_auto</test_depend>
   <test_depend>ament_lint_common</test_depend>

@@ -8,13 +8,16 @@ endif()
 # find dependencies
 find_package(ament_cmake REQUIRED)
 find_package(rosidl_default_generators REQUIRED)
+find_package(geometry_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
 
 rosidl_generate_interfaces(${PROJECT_NAME}
+  "action/PickPlaceManipulation.action"
   "action/TimedRotation.action"
   "srv/GeminiPickPlace.srv"
+  "srv/ProjectDetectionBox.srv"
   "srv/SetCleaningState.srv"
-  DEPENDENCIES sensor_msgs
+  DEPENDENCIES geometry_msgs sensor_msgs
 )
 
 if(BUILD_TESTING)

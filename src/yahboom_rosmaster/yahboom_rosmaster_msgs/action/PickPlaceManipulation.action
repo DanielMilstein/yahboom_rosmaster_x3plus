@@ -1,0 +1,18 @@
+string target_label
+geometry_msgs/Point target_center
+geometry_msgs/Vector3 target_dimensions
+string destination_label
+geometry_msgs/Point destination_center
+geometry_msgs/Vector3 destination_dimensions
+bool execute
+---
+bool success
+string failed_stage
+string error_message
+geometry_msgs/Pose[] poses
+string[] stage_names
+bool[] planned
+bool[] executed
+---
+string stage_name
+string state

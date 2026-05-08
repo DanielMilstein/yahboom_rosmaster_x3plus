@@ -18,6 +18,10 @@
 
   <buildtool_depend>ament_cmake</buildtool_depend>
 
+  <depend>moveit_ros_planning</depend>
+  <depend>rclcpp</depend>
+  <depend>sensor_msgs</depend>
+
   <exec_depend>moveit_ros_move_group</exec_depend>
   <exec_depend>moveit_kinematics</exec_depend>
   <exec_depend>moveit_planners</exec_depend>
@@ -32,6 +36,7 @@
   <exec_depend>controller_manager</exec_depend>
   <exec_depend>cv_bridge</exec_depend>
   <exec_depend>geometry_msgs</exec_depend>
+  <exec_depend>gemini_pick_place_executor</exec_depend>
   <exec_depend>message_filters</exec_depend>
   <exec_depend>moveit_configs_utils</exec_depend>
   <exec_depend>moveit_ros_move_group</exec_depend>
@@ -46,13 +51,13 @@
   <exec_depend>rviz_default_plugins</exec_depend>
   <exec_depend>tf2_ros</exec_depend>
   <exec_depend>warehouse_ros_mongo</exec_depend>
-  <exec_depend>sensor_msgs</exec_depend>
   <exec_depend>shape_msgs</exec_depend>
   <exec_depend>std_msgs</exec_depend>
   <exec_depend>visualization_msgs</exec_depend>
   <exec_depend>xacro</exec_depend>
   <exec_depend>yahboom_rosmaster_description</exec_depend>
   <exec_depend>yahboom_rosmaster_gazebo</exec_depend>
+  <exec_depend>yahboom_rosmaster_msgs</exec_depend>
 
 
   <export>

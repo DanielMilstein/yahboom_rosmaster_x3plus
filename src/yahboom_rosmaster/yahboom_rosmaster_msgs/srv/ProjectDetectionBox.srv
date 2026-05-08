@@ -1,0 +1,9 @@
+float32[2] point
+float32[4] box
+string label
+---
+bool success
+string error_message
+geometry_msgs/Point center
+geometry_msgs/Vector3 dimensions
+uint32 valid_depth_samples

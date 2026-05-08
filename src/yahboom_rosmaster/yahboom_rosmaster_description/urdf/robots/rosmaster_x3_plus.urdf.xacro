@@ -6,6 +6,7 @@
     <xacro:arg name="robot_name" default="rosmaster_x3_plus"/>
     <xacro:arg name="prefix" default=""/>
     <xacro:arg name="use_gazebo" default="false"/>
+    <xacro:arg name="include_mimic_control" default="true"/>
 
     <link name="$(arg prefix)base_footprint"/>
 
@@ -222,6 +223,7 @@
     <xacro:include filename="$(find yahboom_rosmaster_description)/urdf/control/rosmaster_x3_plus_ros2_control.urdf.xacro" />
     <xacro:yahboom_rosmaster_x3_plus_ros2_control
       prefix="$(arg prefix)"
-      use_gazebo="$(arg use_gazebo)"/>
+      use_gazebo="$(arg use_gazebo)"
+      include_mimic_control="$(arg include_mimic_control)"/>
 
 </robot>

@@ -10,13 +10,14 @@ from rclpy.node import Node
 
 
 FRAME_ID = "base_footprint"
+TABLETOP_Z_OFFSET = 0.05
 
 
 def make_pose(x, y, z):
     pose = Pose()
     pose.position.x = float(x)
     pose.position.y = float(y)
-    pose.position.z = float(z)
+    pose.position.z = float(z) + TABLETOP_Z_OFFSET
     pose.orientation.w = 1.0
     return pose
 
@@ -70,7 +71,7 @@ class TabletopScenePublisher(Node):
         scene.world.collision_objects.extend(
             [
                 make_box_object("task_table", make_pose(0.32, 0.04, 0.12), (0.36, 0.34, 0.03)),
-                make_cylinder_object("task_can", make_pose(0.24, 0.10, 0.192), 0.11, 0.025),
+                make_box_object("task_can", make_pose(0.24, 0.10, 0.150), (0.03, 0.03, 0.03)),
                 make_box_object("task_bin_base", make_pose(0.39, -0.07, 0.145), (0.12, 0.12, 0.01)),
                 make_box_object("task_bin_front_wall", make_pose(0.334, -0.07, 0.18), (0.008, 0.12, 0.07)),
                 make_box_object("task_bin_back_wall", make_pose(0.446, -0.07, 0.18), (0.008, 0.12, 0.07)),

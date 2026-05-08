@@ -13,6 +13,8 @@ def generate_launch_description():
     headless = LaunchConfiguration("headless")
     world_file = LaunchConfiguration("world_file")
     use_sim_time = LaunchConfiguration("use_sim_time")
+    publish_tabletop_scene = LaunchConfiguration("publish_tabletop_scene")
+    publish_reachability = LaunchConfiguration("publish_reachability")
 
     gazebo_pkg = FindPackageShare("yahboom_rosmaster_gazebo")
     moveit_pkg = FindPackageShare("x3plus_moveit_config")
@@ -23,6 +25,7 @@ def generate_launch_description():
             mappings={
                 "robot_name": "rosmaster_x3_plus",
                 "use_gazebo": "true",
+                "include_mimic_control": "false",
             }
         )
         .to_moveit_configs()
@@ -74,6 +77,7 @@ def generate_launch_description():
         executable="publish_tabletop_scene.py",
         output="screen",
         parameters=[{"use_sim_time": use_sim_time}],
+        condition=IfCondition(publish_tabletop_scene),
     )
 
     perception_bridge_node = Node(
@@ -87,14 +91,38 @@ def generate_launch_description():
                 "depth_topic": "/cam_1/depth/image_raw",
                 "camera_info_topic": "/cam_1/color/camera_info",
                 "base_frame": "base_footprint",
-                "override_intrinsics": True,
-                "override_fx": 168.61097411363642,
-                "override_fy": 168.61097411363642,
-                "override_cx": 160.0,
-                "override_cy": 90.0,
+                "override_intrinsics": False,
                 "expected_horizontal_fov": 1.5184,
             }
         ],
+    )
+
+    pick_place_manipulation_node = Node(
+        package="gemini_pick_place_executor",
+        executable="pick_place_manipulation_server",
+        output="screen",
+        remappings=[("/joint_states", "/moveit_joint_states")],
+        parameters=[
+            moveit_config.to_dict(),
+            {"use_sim_time": use_sim_time},
+        ],
+    )
+
+    reachability_node = Node(
+        package="x3plus_moveit_config",
+        executable="reachability_cloud_publisher",
+        output="screen",
+        remappings=[("/joint_states", "/moveit_joint_states")],
+        parameters=[
+            moveit_config.to_dict(),
+            {
+                "use_sim_time": use_sim_time,
+                "frame_id": "base_footprint",
+                "group_name": "arm_group",
+                "tip_link": "arm_link5",
+            },
+        ],
+        condition=IfCondition(publish_reachability),
     )
 
     rviz_node = Node(
@@ -119,11 +147,15 @@ def generate_launch_description():
             DeclareLaunchArgument("moveit_rviz", default_value="true"),
             DeclareLaunchArgument("use_sim_time", default_value="true"),
             DeclareLaunchArgument("world_file", default_value="tabletop_can_bin.world"),
+            DeclareLaunchArgument("publish_tabletop_scene", default_value="false"),
+            DeclareLaunchArgument("publish_reachability", default_value="false"),
             gazebo_launch,
             joint_state_filter_node,
             TimerAction(period=2.0, actions=[rviz_node]),
             TimerAction(period=5.0, actions=[move_group_node]),
             TimerAction(period=8.0, actions=[tabletop_scene_node]),
             TimerAction(period=8.0, actions=[perception_bridge_node]),
+            TimerAction(period=9.0, actions=[pick_place_manipulation_node]),
+            TimerAction(period=10.0, actions=[reachability_node]),
         ]
     )

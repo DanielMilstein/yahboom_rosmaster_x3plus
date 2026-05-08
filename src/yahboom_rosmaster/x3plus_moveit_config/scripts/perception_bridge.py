@@ -5,10 +5,11 @@ import struct
 
 import cv2
 from cv_bridge import CvBridge
-from geometry_msgs.msg import PointStamped
+from geometry_msgs.msg import PointStamped, Vector3
 from message_filters import ApproximateTimeSynchronizer, Subscriber
 from sensor_msgs.msg import CameraInfo, Image
 from visualization_msgs.msg import Marker
+from yahboom_rosmaster_msgs.srv import ProjectDetectionBox
 
 import rclpy
 from rclpy.duration import Duration
@@ -41,6 +42,9 @@ class PerceptionBridge(Node):
         self.declare_parameter("debug_pixel_u", -1)
         self.declare_parameter("debug_pixel_v", -1)
         self.declare_parameter("depth_search_radius", 10)
+        self.declare_parameter("dimension_box_scale", 0.65)
+        self.declare_parameter("dimension_sample_count", 7)
+        self.declare_parameter("dimension_trim_fraction", 0.2)
         self.declare_parameter("override_intrinsics", False)
         self.declare_parameter("override_fx", 0.0)
         self.declare_parameter("override_fy", 0.0)
@@ -69,6 +73,7 @@ class PerceptionBridge(Node):
         self.last_depth_pixel = None
         self.warned_camera_info = False
         self.warned_intrinsics_override = False
+        self.logged_projection_intrinsics = False
 
         self.tf_buffer = tf2_ros.Buffer(cache_time=Duration(seconds=10.0))
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
@@ -85,6 +90,11 @@ class PerceptionBridge(Node):
         )
         self.pixel_sub = self.create_subscription(
             PointStamped, "/perception_bridge/pixel", self.pixel_callback, 10
+        )
+        self.box_service = self.create_service(
+            ProjectDetectionBox,
+            "/perception_bridge/project_detection_box",
+            self.project_detection_box_callback,
         )
 
         self.camera_point_pub = self.create_publisher(
@@ -116,6 +126,10 @@ class PerceptionBridge(Node):
         self.get_logger().info(
             "Publish geometry_msgs/PointStamped to /perception_bridge/pixel "
             "with point.x=u and point.y=v to project a pixel."
+        )
+        self.get_logger().info(
+            "Call /perception_bridge/project_detection_box with normalized Gemini "
+            "[y, x] point and [ymin, xmin, ymax, xmax] box to estimate 3D center/dimensions."
         )
 
     def synced_image_callback(self, rgb_msg, depth_msg):
@@ -193,7 +207,15 @@ class PerceptionBridge(Node):
                 )
             return fx, fy, cx, cy
 
-        return camera_info.k[0], camera_info.k[4], camera_info.k[2], camera_info.k[5]
+        fx, fy, cx, cy = camera_info.k[0], camera_info.k[4], camera_info.k[2], camera_info.k[5]
+        if not self.logged_projection_intrinsics:
+            self.logged_projection_intrinsics = True
+            self.get_logger().info(
+                "Using CameraInfo projection intrinsics "
+                f"size={camera_info.width}x{camera_info.height} "
+                f"fx={fx:.3f}, fy={fy:.3f}, cx={cx:.3f}, cy={cy:.3f}"
+            )
+        return fx, fy, cx, cy
 
     def pixel_callback(self, msg):
         u = int(round(msg.point.x))
@@ -232,6 +254,139 @@ class PerceptionBridge(Node):
             f"{base_point.point.y:.3f}, {base_point.point.z:.3f})"
         )
         return base_point
+
+    def project_detection_box_callback(self, request, response):
+        try:
+            center_u, center_v = self.normalized_point_to_pixel(request.point)
+            min_u, min_v, max_u, max_v = self.normalized_box_to_pixel_bounds(request.box)
+            min_u, min_v, max_u, max_v = self.shrink_pixel_bounds(
+                min_u,
+                min_v,
+                max_u,
+                max_v,
+                float(self.get_parameter("dimension_box_scale").value),
+            )
+            center_point = self.project_and_publish(center_u, center_v)
+            if center_point is None:
+                raise RuntimeError("Could not project detection center")
+
+            samples = self.sample_box_points(min_u, min_v, max_u, max_v)
+            if len(samples) < 4:
+                raise RuntimeError(
+                    f"Only {len(samples)} valid depth samples inside detection box"
+                )
+
+            xs = [point.point.x for point in samples]
+            ys = [point.point.y for point in samples]
+            zs = [point.point.z for point in samples]
+
+            response.success = True
+            response.error_message = ""
+            response.center = center_point.point
+            response.dimensions = Vector3(
+                x=self.trimmed_range(xs),
+                y=self.trimmed_range(ys),
+                z=self.trimmed_range(zs),
+            )
+            response.valid_depth_samples = len(samples)
+            self.get_logger().info(
+                f"box label={request.label!r} center=({response.center.x:.3f}, "
+                f"{response.center.y:.3f}, {response.center.z:.3f}) "
+                f"dims=({response.dimensions.x:.3f}, {response.dimensions.y:.3f}, "
+                f"{response.dimensions.z:.3f}) samples={response.valid_depth_samples}"
+            )
+        except Exception as exc:
+            response.success = False
+            response.error_message = str(exc)
+            response.valid_depth_samples = 0
+            self.get_logger().warn(f"Could not project detection box: {exc}")
+        return response
+
+    def normalized_point_to_pixel(self, point):
+        rgb_msg = self.capture_latest_rgb_frame()
+        if rgb_msg is None:
+            raise RuntimeError("No RGB frame received yet")
+        if len(point) != 2:
+            raise RuntimeError("Detection point must be [y, x]")
+        y = max(0.0, min(1.0, float(point[0])))
+        x = max(0.0, min(1.0, float(point[1])))
+        u = int(round(x * (rgb_msg.width - 1)))
+        v = int(round(y * (rgb_msg.height - 1)))
+        return u, v
+
+    def normalized_box_to_pixel_bounds(self, box):
+        rgb_msg = self.capture_latest_rgb_frame()
+        if rgb_msg is None:
+            raise RuntimeError("No RGB frame received yet")
+        if len(box) != 4:
+            raise RuntimeError("Detection box must be [ymin, xmin, ymax, xmax]")
+
+        ymin, xmin, ymax, xmax = [max(0.0, min(1.0, float(value))) for value in box]
+        if ymin > ymax or xmin > xmax:
+            raise RuntimeError("Detection box min coordinates must not exceed max coordinates")
+
+        min_u = int(round(xmin * (rgb_msg.width - 1)))
+        max_u = int(round(xmax * (rgb_msg.width - 1)))
+        min_v = int(round(ymin * (rgb_msg.height - 1)))
+        max_v = int(round(ymax * (rgb_msg.height - 1)))
+        return min_u, min_v, max_u, max_v
+
+    def shrink_pixel_bounds(self, min_u, min_v, max_u, max_v, scale):
+        scale = max(0.1, min(1.0, scale))
+        center_u = (min_u + max_u) * 0.5
+        center_v = (min_v + max_v) * 0.5
+        half_width = max(1.0, (max_u - min_u) * 0.5 * scale)
+        half_height = max(1.0, (max_v - min_v) * 0.5 * scale)
+        return (
+            int(round(center_u - half_width)),
+            int(round(center_v - half_height)),
+            int(round(center_u + half_width)),
+            int(round(center_v + half_height)),
+        )
+
+    def trimmed_range(self, values):
+        if not values:
+            return 0.0
+        sorted_values = sorted(values)
+        trim_fraction = max(
+            0.0,
+            min(0.45, float(self.get_parameter("dimension_trim_fraction").value)),
+        )
+        trim_count = int(len(sorted_values) * trim_fraction)
+        if trim_count > 0 and trim_count * 2 < len(sorted_values):
+            sorted_values = sorted_values[trim_count:-trim_count]
+        return max(sorted_values) - min(sorted_values)
+
+    def sample_box_points(self, min_u, min_v, max_u, max_v):
+        depth_msg = self.capture_latest_depth_frame()
+        if depth_msg is None:
+            raise RuntimeError("No synchronized depth frame received yet")
+
+        min_u = max(0, min(depth_msg.width - 1, min_u))
+        max_u = max(0, min(depth_msg.width - 1, max_u))
+        min_v = max(0, min(depth_msg.height - 1, min_v))
+        max_v = max(0, min(depth_msg.height - 1, max_v))
+        if min_u > max_u or min_v > max_v:
+            raise RuntimeError("Detection box is outside the depth image")
+
+        sample_count = max(3, int(self.get_parameter("dimension_sample_count").value))
+        points = []
+        for row in range(sample_count):
+            if sample_count == 1:
+                v = min_v
+            else:
+                v = int(round(min_v + (max_v - min_v) * row / (sample_count - 1)))
+            for col in range(sample_count):
+                if sample_count == 1:
+                    u = min_u
+                else:
+                    u = int(round(min_u + (max_u - min_u) * col / (sample_count - 1)))
+                try:
+                    camera_point = self.project_2d_pixel_to_3d_point(u, v)
+                    points.append(self.transform_camera_point_to_base(camera_point))
+                except Exception:
+                    continue
+        return points
 
     def project_2d_pixel_to_3d_point(self, u, v):
         depth_msg = self.capture_latest_depth_frame()

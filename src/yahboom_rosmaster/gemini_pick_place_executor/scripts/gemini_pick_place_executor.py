@@ -4,16 +4,20 @@ import json
 import threading
 import time
 from copy import deepcopy
+from types import SimpleNamespace
 
-from geometry_msgs.msg import PointStamped
+from geometry_msgs.msg import Point, PointStamped, Vector3
 from sensor_msgs.msg import Image
 from std_msgs.msg import ColorRGBA
 from visualization_msgs.msg import Marker, MarkerArray
 
 import rclpy
+from rclpy.action import ActionClient
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
+from yahboom_rosmaster_msgs.action import PickPlaceManipulation
 from yahboom_rosmaster_msgs.srv import GeminiPickPlace
+from yahboom_rosmaster_msgs.srv import ProjectDetectionBox
 
 
 def normalized_point_to_pixel(point, width, height):
@@ -48,20 +52,37 @@ class GeminiPickPlaceExecutor(Node):
     def __init__(self):
         super().__init__("gemini_pick_place_executor")
 
-        self.declare_parameter("task", "put the red can in the blue bin")
+        self.declare_parameter("task", "put the red cube in the blue bin")
         self.declare_parameter("image_topic", "/perception_bridge/debug_image")
         self.declare_parameter("gemini_service", "/gemini_pick_place")
+        self.declare_parameter("box_projection_service", "/perception_bridge/project_detection_box")
+        self.declare_parameter("manipulation_action", "pick_place_manipulation")
         self.declare_parameter("pixel_topic", "/perception_bridge/pixel")
         self.declare_parameter("base_point_topic", "/perception_bridge/selected_point_base")
         self.declare_parameter("marker_topic", "/gemini_pick_place/debug_markers")
+        self.declare_parameter("marker_frame", "base_footprint")
         self.declare_parameter("auto_start", True)
         self.declare_parameter("project_timeout_sec", 3.0)
         self.declare_parameter("service_timeout_sec", 10.0)
+        self.declare_parameter("action_timeout_sec", 180.0)
         self.declare_parameter("pick_lift_m", 0.08)
         self.declare_parameter("place_lift_m", 0.08)
         self.declare_parameter("destination_point_source", "box_bias")
         self.declare_parameter("destination_box_y_fraction", 0.5)
         self.declare_parameter("destination_box_x_fraction", 0.5)
+        self.declare_parameter("use_sim_task_geometry", False)
+        self.declare_parameter("sim_target_x", 0.24)
+        self.declare_parameter("sim_target_y", 0.10)
+        self.declare_parameter("sim_target_z", 0.20)
+        self.declare_parameter("sim_target_size_x", 0.03)
+        self.declare_parameter("sim_target_size_y", 0.03)
+        self.declare_parameter("sim_target_size_z", 0.03)
+        self.declare_parameter("sim_destination_x", 0.39)
+        self.declare_parameter("sim_destination_y", -0.07)
+        self.declare_parameter("sim_destination_z", 0.20)
+        self.declare_parameter("sim_destination_size_x", 0.12)
+        self.declare_parameter("sim_destination_size_y", 0.12)
+        self.declare_parameter("sim_destination_size_z", 0.08)
         self.declare_parameter("execute", False)
 
         self.latest_image = None
@@ -90,12 +111,13 @@ class GeminiPickPlaceExecutor(Node):
         self.gemini_client = self.create_client(
             GeminiPickPlace, self.get_parameter("gemini_service").value
         )
+        self.box_projection_client = self.create_client(
+            ProjectDetectionBox, self.get_parameter("box_projection_service").value
+        )
+        self.manipulation_client = ActionClient(
+            self, PickPlaceManipulation, self.get_parameter("manipulation_action").value
+        )
         self.start_timer = self.create_timer(0.5, self.maybe_start)
-
-        if bool(self.get_parameter("execute").value):
-            self.get_logger().warn(
-                "execute:=true is not implemented yet; this node only publishes debug markers"
-            )
 
         self.get_logger().info(
             f"Waiting for image on {image_topic}; markers will publish on {marker_topic}"
@@ -143,29 +165,48 @@ class GeminiPickPlaceExecutor(Node):
             self.get_logger().error(f"Could not parse accepted Gemini JSON: {exc}")
             return
 
-        target_pixel = normalized_point_to_pixel(
-            plan["target_object"]["point"], image.width, image.height
-        )
+        if "box" not in plan["target_object"]:
+            self.get_logger().error("Gemini target_object is missing required box")
+            return
+        if "box" not in plan["destination"]:
+            self.get_logger().error("Gemini destination is missing required box")
+            return
+
         destination_point_2d, destination_reason = self.destination_point_2d(plan)
-        destination_pixel = normalized_point_to_pixel(
-            destination_point_2d, image.width, image.height
-        )
 
-        self.get_logger().info(
-            f"Projecting target pixel {target_pixel} and destination pixel {destination_pixel} "
-            f"({destination_reason})"
-        )
-        target_point = self.project_pixel("target", target_pixel, image.header.frame_id)
-        if target_point is None:
-            return
-        destination_point = self.project_pixel(
-            "destination", destination_pixel, image.header.frame_id
-        )
-        if destination_point is None:
-            return
+        if bool(self.get_parameter("use_sim_task_geometry").value):
+            target_projection = self.sim_projection("target")
+            destination_projection = self.sim_projection("destination")
+            self.get_logger().warn(
+                "Using known Gazebo task geometry instead of Gemini/depth projection"
+            )
+        else:
+            target_projection = self.project_detection(
+                "target",
+                plan["target_object"]["label"],
+                plan["target_object"]["point"],
+                plan["target_object"]["box"],
+            )
+            if target_projection is None:
+                return
+            destination_projection = self.project_detection(
+                "destination",
+                plan["destination"]["label"],
+                destination_point_2d,
+                plan["destination"]["box"],
+            )
+            if destination_projection is None:
+                return
 
-        self.publish_debug_markers(target_point, destination_point)
-        self.log_candidate_summary(plan, target_point, destination_point)
+        self.get_logger().info(f"Destination point source: {destination_reason}")
+        manipulation_result = self.call_manipulation(plan, target_projection, destination_projection)
+        self.publish_debug_markers(
+            target_projection.center,
+            destination_projection.center,
+            manipulation_result.poses if manipulation_result is not None else [],
+            manipulation_result.stage_names if manipulation_result is not None else [],
+        )
+        self.log_candidate_summary(plan, target_projection, destination_projection, manipulation_result)
 
     def destination_point_2d(self, plan):
         destination = plan["destination"]
@@ -216,6 +257,106 @@ class GeminiPickPlaceExecutor(Node):
             return None
         return {"response": response}
 
+    def project_detection(self, name, label, point, box):
+        timeout_sec = float(self.get_parameter("service_timeout_sec").value)
+        if not self.box_projection_client.wait_for_service(timeout_sec=timeout_sec):
+            self.get_logger().error("Timed out waiting for /perception_bridge/project_detection_box")
+            return None
+
+        request = ProjectDetectionBox.Request()
+        request.label = str(label)
+        request.point = [float(point[0]), float(point[1])]
+        request.box = [float(value) for value in box]
+        future = self.box_projection_client.call_async(request)
+
+        while rclpy.ok() and not future.done():
+            time.sleep(0.05)
+
+        if not future.done() or future.result() is None:
+            self.get_logger().error(f"Projection service did not return a {name} response")
+            return None
+
+        response = future.result()
+        if not response.success:
+            self.get_logger().error(f"Could not project {name}: {response.error_message}")
+            return None
+
+        self.get_logger().info(
+            f"{name} projection: center=({response.center.x:.3f}, "
+            f"{response.center.y:.3f}, {response.center.z:.3f}) "
+            f"dims=({response.dimensions.x:.3f}, {response.dimensions.y:.3f}, "
+            f"{response.dimensions.z:.3f}) samples={response.valid_depth_samples}"
+        )
+        return response
+
+    def sim_projection(self, name):
+        prefix = "sim_target" if name == "target" else "sim_destination"
+        center = Point()
+        center.x = float(self.get_parameter(f"{prefix}_x").value)
+        center.y = float(self.get_parameter(f"{prefix}_y").value)
+        center.z = float(self.get_parameter(f"{prefix}_z").value)
+
+        dimensions = Vector3()
+        dimensions.x = float(self.get_parameter(f"{prefix}_size_x").value)
+        dimensions.y = float(self.get_parameter(f"{prefix}_size_y").value)
+        dimensions.z = float(self.get_parameter(f"{prefix}_size_z").value)
+
+        self.get_logger().info(
+            f"{name} sim geometry: center=({center.x:.3f}, {center.y:.3f}, {center.z:.3f}) "
+            f"dims=({dimensions.x:.3f}, {dimensions.y:.3f}, {dimensions.z:.3f})"
+        )
+        return SimpleNamespace(center=center, dimensions=dimensions, valid_depth_samples=0)
+
+    def call_manipulation(self, plan, target_projection, destination_projection):
+        timeout_sec = float(self.get_parameter("service_timeout_sec").value)
+        if not self.manipulation_client.wait_for_server(timeout_sec=timeout_sec):
+            self.get_logger().error("Timed out waiting for pick_place_manipulation action server")
+            return None
+
+        goal = PickPlaceManipulation.Goal()
+        goal.target_label = str(plan["target_object"]["label"])
+        goal.target_center = target_projection.center
+        goal.target_dimensions = target_projection.dimensions
+        goal.destination_label = str(plan["destination"]["label"])
+        goal.destination_center = destination_projection.center
+        goal.destination_dimensions = destination_projection.dimensions
+        goal.execute = bool(self.get_parameter("execute").value)
+
+        send_future = self.manipulation_client.send_goal_async(
+            goal, feedback_callback=self.manipulation_feedback_callback
+        )
+        while rclpy.ok() and not send_future.done():
+            time.sleep(0.05)
+
+        goal_handle = send_future.result()
+        if goal_handle is None or not goal_handle.accepted:
+            self.get_logger().error("Manipulation action goal was rejected")
+            return None
+
+        result_future = goal_handle.get_result_async()
+        deadline = time.monotonic() + float(self.get_parameter("action_timeout_sec").value)
+        while rclpy.ok() and not result_future.done() and time.monotonic() < deadline:
+            time.sleep(0.05)
+
+        if not result_future.done() or result_future.result() is None:
+            self.get_logger().error("Timed out waiting for manipulation action result")
+            return None
+
+        result = result_future.result().result
+        if result.success:
+            self.get_logger().info("Manipulation planning/execution succeeded")
+        else:
+            self.get_logger().error(
+                f"Manipulation failed at {result.failed_stage}: {result.error_message}"
+            )
+        return result
+
+    def manipulation_feedback_callback(self, feedback_msg):
+        feedback = feedback_msg.feedback
+        self.get_logger().info(
+            f"Manipulation feedback: {feedback.stage_name} {feedback.state}"
+        )
+
     def project_pixel(self, name, pixel, frame_id):
         self.base_point_event.clear()
         self.latest_base_point = None
@@ -242,7 +383,9 @@ class GeminiPickPlaceExecutor(Node):
         )
         return point
 
-    def publish_debug_markers(self, target_point, destination_point):
+    def publish_debug_markers(self, target_point, destination_point, poses=None, stage_names=None):
+        poses = poses or []
+        stage_names = stage_names or []
         markers = MarkerArray()
         markers.markers.extend(
             [
@@ -267,17 +410,22 @@ class GeminiPickPlaceExecutor(Node):
                 ),
             ]
         )
+        for index, pose in enumerate(poses):
+            name = stage_names[index] if index < len(stage_names) else f"stage_{index}"
+            markers.markers.append(
+                self.make_pose_marker(10 + index, name, pose, make_color(0.9, 0.9, 0.1))
+            )
         self.marker_pub.publish(markers)
 
     def make_sphere_marker(self, marker_id, namespace, point, color):
         marker = Marker()
-        marker.header.frame_id = point.header.frame_id
+        marker.header.frame_id = self.get_parameter("marker_frame").value
         marker.header.stamp = self.get_clock().now().to_msg()
         marker.ns = namespace
         marker.id = marker_id
         marker.type = Marker.SPHERE
         marker.action = Marker.ADD
-        marker.pose.position = point.point
+        marker.pose.position = point
         marker.pose.orientation.w = 1.0
         marker.scale.x = 0.04
         marker.scale.y = 0.04
@@ -287,7 +435,7 @@ class GeminiPickPlaceExecutor(Node):
 
     def make_line_marker(self, marker_id, target_point, destination_point):
         marker = Marker()
-        marker.header.frame_id = target_point.header.frame_id
+        marker.header.frame_id = self.get_parameter("marker_frame").value
         marker.header.stamp = self.get_clock().now().to_msg()
         marker.ns = "pick_place_line"
         marker.id = marker_id
@@ -296,13 +444,13 @@ class GeminiPickPlaceExecutor(Node):
         marker.pose.orientation.w = 1.0
         marker.scale.x = 0.01
         marker.color = make_color(0.9, 0.9, 0.9)
-        marker.points.append(target_point.point)
-        marker.points.append(destination_point.point)
+        marker.points.append(target_point)
+        marker.points.append(destination_point)
         return marker
 
     def make_lift_marker(self, marker_id, namespace, point, lift_m, color):
         marker = Marker()
-        marker.header.frame_id = point.header.frame_id
+        marker.header.frame_id = self.get_parameter("marker_frame").value
         marker.header.stamp = self.get_clock().now().to_msg()
         marker.ns = namespace
         marker.id = marker_id
@@ -314,23 +462,42 @@ class GeminiPickPlaceExecutor(Node):
         marker.scale.z = 0.05
         marker.color = color
 
-        start = deepcopy(point.point)
-        end = deepcopy(point.point)
+        start = deepcopy(point)
+        end = deepcopy(point)
         end.z += lift_m
         marker.points.append(start)
         marker.points.append(end)
         return marker
 
-    def log_candidate_summary(self, plan, target_point, destination_point):
+    def make_pose_marker(self, marker_id, namespace, pose, color):
+        marker = Marker()
+        marker.header.frame_id = self.get_parameter("marker_frame").value
+        marker.header.stamp = self.get_clock().now().to_msg()
+        marker.ns = namespace
+        marker.id = marker_id
+        marker.type = Marker.ARROW
+        marker.action = Marker.ADD
+        marker.pose = pose
+        marker.scale.x = 0.06
+        marker.scale.y = 0.012
+        marker.scale.z = 0.012
+        marker.color = color
+        return marker
+
+    def log_candidate_summary(self, plan, target_projection, destination_projection, manipulation_result):
         pick_lift = float(self.get_parameter("pick_lift_m").value)
         place_lift = float(self.get_parameter("place_lift_m").value)
+        target_point = target_projection.center
+        destination_point = destination_projection.center
+        status = "not requested" if manipulation_result is None else str(manipulation_result.success)
         self.get_logger().info(
-            "Debug pick/place candidates only. "
+            "Pick/place candidate summary. "
             f"target={plan['target_object']['label']} "
-            f"at ({target_point.point.x:.3f}, {target_point.point.y:.3f}, {target_point.point.z:.3f}), "
+            f"at ({target_point.x:.3f}, {target_point.y:.3f}, {target_point.z:.3f}), "
             f"destination={plan['destination']['label']} "
-            f"at ({destination_point.point.x:.3f}, {destination_point.point.y:.3f}, {destination_point.point.z:.3f}), "
-            f"pick_lift={pick_lift:.3f}m place_lift={place_lift:.3f}m"
+            f"at ({destination_point.x:.3f}, {destination_point.y:.3f}, {destination_point.z:.3f}), "
+            f"pick_lift={pick_lift:.3f}m place_lift={place_lift:.3f}m "
+            f"manipulation_success={status}"
         )
 
 
@@ -341,7 +508,8 @@ def main(args=None):
         rclpy.spin(node)
     finally:
         node.destroy_node()
-        rclpy.shutdown()
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 if __name__ == "__main__":

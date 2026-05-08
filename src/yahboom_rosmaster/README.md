@@ -6,10 +6,10 @@
 
 ## Gemini Robotics pick-and-place debug flow
 
-This flow is currently debug-only. It asks Gemini Robotics for image-space
-target/destination points, projects those pixels into `base_footprint` through
-the perception bridge, and publishes RViz markers. It does not command robot
-motion.
+This flow asks Gemini Robotics for image-space target/destination points and
+boxes, projects them into `base_footprint` through the perception bridge, and
+generates MoveIt pick/place stages. It defaults to plan-only mode and publishes
+RViz markers. Robot motion only runs when `execute:=true` is set.
 
 ### Build
 
@@ -67,6 +67,23 @@ task="put the red can in the blue bin"
 image_topic=/perception_bridge/debug_image
 marker_topic=/gemini_pick_place/debug_markers
 execute=false
+```
+
+The generated manipulation stages are:
+
+```bash
+pre_grasp
+grasp
+lift
+pre_place
+place
+```
+
+Run the same executor with motion enabled only after plan-only mode succeeds:
+
+```bash
+ros2 run gemini_pick_place_executor gemini_pick_place_executor.py --ros-args \
+  -p execute:=true
 ```
 
 ### RViz
