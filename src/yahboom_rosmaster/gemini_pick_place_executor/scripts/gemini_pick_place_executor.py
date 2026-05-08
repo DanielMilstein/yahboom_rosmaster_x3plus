@@ -412,11 +412,10 @@ class GeminiPickPlaceExecutor(Node):
         pose.pose.orientation.w = qw
         return pose
 
-    def plan_and_execute(self, component, label):
+    def plan_and_execute(self, component, group_name, label):
         if component is None or self.moveit is None:
             self.get_logger().error(f"[{label}] MoveItPy not initialized")
             return False
-        planning_time = float(self.get_parameter("planning_time").value)
         try:
             component.set_workspace(-1.0, -1.0, -0.1, 1.0, 1.0, 2.0)
         except Exception:
@@ -430,33 +429,37 @@ class GeminiPickPlaceExecutor(Node):
         except AttributeError:
             self.get_logger().error(f"[{label}] plan result has no trajectory")
             return False
-        self.get_logger().info(f"[{label}] plan ok, executing")
-        self.moveit.execute(trajectory, controllers=[])
+        self.get_logger().info(f"[{label}] plan ok, executing on '{group_name}'")
+        status = self.moveit.execute(group_name, trajectory)
+        self.get_logger().info(f"[{label}] execution status: {status}")
         return True
 
     def plan_and_execute_pose(self, pose_stamped, label):
         if self.arm_component is None:
             return False
+        arm_name = str(self.get_parameter("arm_group_name").value)
         ee_link = str(self.get_parameter("end_effector_link").value)
         self.arm_component.set_start_state_to_current_state()
         self.arm_component.set_goal_state(
             pose_stamped_msg=pose_stamped, pose_link=ee_link
         )
-        return self.plan_and_execute(self.arm_component, label)
+        return self.plan_and_execute(self.arm_component, arm_name, label)
 
     def plan_and_execute_named_arm(self, name, label):
         if self.arm_component is None:
             return False
+        arm_name = str(self.get_parameter("arm_group_name").value)
         self.arm_component.set_start_state_to_current_state()
         self.arm_component.set_goal_state(configuration_name=str(name))
-        return self.plan_and_execute(self.arm_component, label)
+        return self.plan_and_execute(self.arm_component, arm_name, label)
 
     def plan_and_execute_named_gripper(self, name, label):
         if self.gripper_component is None:
             return False
+        gripper_name = str(self.get_parameter("gripper_group_name").value)
         self.gripper_component.set_start_state_to_current_state()
         self.gripper_component.set_goal_state(configuration_name=str(name))
-        return self.plan_and_execute(self.gripper_component, label)
+        return self.plan_and_execute(self.gripper_component, gripper_name, label)
 
     def plan_and_execute_gripper_value(self, grip_joint_rad, label):
         if self.gripper_component is None or self.moveit is None:
@@ -469,7 +472,7 @@ class GeminiPickPlaceExecutor(Node):
         state.set_joint_group_positions(gripper_name, [float(grip_joint_rad)])
         self.gripper_component.set_start_state_to_current_state()
         self.gripper_component.set_goal_state(robot_state=state)
-        return self.plan_and_execute(self.gripper_component, label)
+        return self.plan_and_execute(self.gripper_component, gripper_name, label)
 
     def grasp_grip_joint(self, measured_width_m):
         clearance = float(self.get_parameter("grasp_clearance_m").value)
