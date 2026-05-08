@@ -211,11 +211,11 @@
         </gazebo>
     </xacro:if>
 
-    <xacro:include filename="$(find yahboom_rosmaster_description)/urdf/control/velocity_control_plugin.urdf.xacro" />
-    <xacro:load_velocity_control_plugin use_gazebo="$(arg use_gazebo)"/>
-
-    <xacro:include filename="$(find yahboom_rosmaster_description)/urdf/control/gz_odom_publisher.urdf.xacro" />
-    <xacro:load_gz_odom_publisher robot_name="$(arg robot_name)" use_gazebo="$(arg use_gazebo)"/>
+    <xacro:include filename="$(find yahboom_rosmaster_description)/urdf/mech/mecanum_wheel.urdf.xacro"/>
+    <xacro:mecanum_wheel prefix="$(arg prefix)" side="front_left"  x_reflect="1"  y_reflect="1"  z_offset="-0.076"/>
+    <xacro:mecanum_wheel prefix="$(arg prefix)" side="front_right" x_reflect="1"  y_reflect="-1" z_offset="-0.076"/>
+    <xacro:mecanum_wheel prefix="$(arg prefix)" side="back_left"   x_reflect="-1" y_reflect="1"  z_offset="-0.076"/>
+    <xacro:mecanum_wheel prefix="$(arg prefix)" side="back_right"  x_reflect="-1" y_reflect="-1" z_offset="-0.076"/>
 
     <xacro:include filename="$(find yahboom_rosmaster_description)/urdf/control/gazebo_sim_ros2_control.urdf.xacro" />
     <xacro:load_gazebo_sim_ros2_control_plugin

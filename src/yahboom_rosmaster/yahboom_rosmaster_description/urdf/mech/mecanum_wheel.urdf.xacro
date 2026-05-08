@@ -8,7 +8,7 @@
   <xacro:property name="wheel_xoff" value="0.08" />
   <xacro:property name="wheel_yoff" value="-0.01" />
 
-  <xacro:macro name="mecanum_wheel" params="prefix side x_reflect y_reflect">
+  <xacro:macro name="mecanum_wheel" params="prefix side x_reflect y_reflect z_offset:=${-wheel_radius}">
     <link name="${prefix}${side}_wheel_link">
       <visual>
         <origin xyz="0 0 0" rpy="${pi/2} 0 0"/>
@@ -41,7 +41,7 @@
       <axis xyz="0 1 0"/>
       <parent link="${prefix}base_link"/>
       <child link="${prefix}${side}_wheel_link"/>
-      <origin xyz="${x_reflect*wheel_xoff} ${y_reflect*(wheel_separation/2+wheel_yoff)} ${-wheel_radius}" rpy="0 0 0"/>
+      <origin xyz="${x_reflect*wheel_xoff} ${y_reflect*(wheel_separation/2+wheel_yoff)} ${z_offset}" rpy="0 0 0"/>
     </joint>
 
     <gazebo reference="${prefix}${side}_wheel_link">
