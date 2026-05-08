@@ -15,6 +15,9 @@
   <exec_depend>std_msgs</exec_depend>
   <exec_depend>visualization_msgs</exec_depend>
   <exec_depend>yahboom_rosmaster_msgs</exec_depend>
+  <exec_depend>moveit_py</exec_depend>
+  <exec_depend>moveit_msgs</exec_depend>
+  <exec_depend>x3plus_moveit_config</exec_depend>
 
   <test_depend>ament_lint_auto</test_depend>
   <test_depend>ament_lint_common</test_depend>
