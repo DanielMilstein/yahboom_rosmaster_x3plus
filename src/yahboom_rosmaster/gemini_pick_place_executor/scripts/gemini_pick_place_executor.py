@@ -111,8 +111,8 @@ class GeminiPickPlaceExecutor(Node):
         self.declare_parameter("auto_start", True)
         self.declare_parameter("project_timeout_sec", 3.0)
         self.declare_parameter("service_timeout_sec", 10.0)
-        self.declare_parameter("pick_lift_m", 0.08)
-        self.declare_parameter("place_lift_m", 0.08)
+        self.declare_parameter("pick_lift_m", 0.04)
+        self.declare_parameter("place_lift_m", 0.04)
         self.declare_parameter("destination_point_source", "box_bias")
         self.declare_parameter("destination_box_y_fraction", 0.5)
         self.declare_parameter("destination_box_x_fraction", 0.5)
@@ -123,7 +123,8 @@ class GeminiPickPlaceExecutor(Node):
         self.declare_parameter("home_named", "up")
         self.declare_parameter("gripper_open_named", "open")
         self.declare_parameter("gripper_closed_named", "close")
-        self.declare_parameter("gripper_tcp_offset_z", 0.09)
+        self.declare_parameter("gripper_tcp_offset_z", 0.04)
+        self.declare_parameter("use_orientation_constraint", True)
         self.declare_parameter("top_down_yaw", 0.0)
         self.declare_parameter("planning_time", 5.0)
         self.declare_parameter("velocity_scale", 0.3)
@@ -458,15 +459,16 @@ class GeminiPickPlaceExecutor(Node):
         pc.constraint_region.primitive_poses.append(pose_stamped.pose)
         constraints.position_constraints.append(pc)
 
-        oc = OrientationConstraint()
-        oc.header = pose_stamped.header
-        oc.link_name = ee_link
-        oc.orientation = pose_stamped.pose.orientation
-        oc.absolute_x_axis_tolerance = xy_tol
-        oc.absolute_y_axis_tolerance = xy_tol
-        oc.absolute_z_axis_tolerance = z_tol
-        oc.weight = 1.0
-        constraints.orientation_constraints.append(oc)
+        if bool(self.get_parameter("use_orientation_constraint").value):
+            oc = OrientationConstraint()
+            oc.header = pose_stamped.header
+            oc.link_name = ee_link
+            oc.orientation = pose_stamped.pose.orientation
+            oc.absolute_x_axis_tolerance = xy_tol
+            oc.absolute_y_axis_tolerance = xy_tol
+            oc.absolute_z_axis_tolerance = z_tol
+            oc.weight = 1.0
+            constraints.orientation_constraints.append(oc)
 
         return constraints
 

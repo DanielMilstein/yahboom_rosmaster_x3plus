@@ -8,10 +8,25 @@ from launch_ros.actions import Node
 from moveit_configs_utils import MoveItConfigsBuilder
 
 
+FORWARDED_PARAMS = [
+    ("execute", "false"),
+    ("task", "put the red can in the blue bin"),
+    ("pick_lift_m", "0.04"),
+    ("place_lift_m", "0.04"),
+    ("gripper_tcp_offset_z", "0.04"),
+    ("position_tolerance_m", "0.01"),
+    ("orientation_xy_tol_rad", "0.3"),
+    ("orientation_z_tol_rad", "3.14"),
+    ("use_orientation_constraint", "true"),
+    ("top_down_yaw", "0.0"),
+    ("planning_time", "5.0"),
+    ("velocity_scale", "0.3"),
+    ("accel_scale", "0.3"),
+]
+
+
 def generate_launch_description():
-    execute = LaunchConfiguration("execute")
     use_sim_time = LaunchConfiguration("use_sim_time")
-    task = LaunchConfiguration("task")
 
     moveit_cpp_yaml = os.path.join(
         get_package_share_directory("gemini_pick_place_executor"),
@@ -31,6 +46,8 @@ def generate_launch_description():
         .to_moveit_configs()
     )
 
+    forwarded = {name: LaunchConfiguration(name) for name, _ in FORWARDED_PARAMS}
+
     executor_node = Node(
         package="gemini_pick_place_executor",
         executable="gemini_pick_place_executor.py",
@@ -38,21 +55,14 @@ def generate_launch_description():
         output="screen",
         parameters=[
             moveit_config.to_dict(),
-            {
-                "use_sim_time": use_sim_time,
-                "execute": execute,
-                "task": task,
-            },
+            {"use_sim_time": use_sim_time, **forwarded},
         ],
     )
 
-    return LaunchDescription(
-        [
-            DeclareLaunchArgument("execute", default_value="false"),
-            DeclareLaunchArgument("use_sim_time", default_value="true"),
-            DeclareLaunchArgument(
-                "task", default_value="put the red can in the blue bin"
-            ),
-            executor_node,
-        ]
-    )
+    declares = [DeclareLaunchArgument("use_sim_time", default_value="true")]
+    declares += [
+        DeclareLaunchArgument(name, default_value=default)
+        for name, default in FORWARDED_PARAMS
+    ]
+
+    return LaunchDescription(declares + [executor_node])
