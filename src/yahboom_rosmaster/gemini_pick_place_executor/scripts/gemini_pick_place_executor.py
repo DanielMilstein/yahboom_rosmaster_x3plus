@@ -7,7 +7,9 @@ import time
 from copy import deepcopy
 
 from geometry_msgs.msg import PointStamped, PoseStamped
+from moveit_msgs.msg import Constraints, OrientationConstraint, PositionConstraint
 from sensor_msgs.msg import Image
+from shape_msgs.msg import SolidPrimitive
 from std_msgs.msg import ColorRGBA
 from visualization_msgs.msg import Marker, MarkerArray
 
@@ -130,6 +132,9 @@ class GeminiPickPlaceExecutor(Node):
         self.declare_parameter("min_grasp_width_m", 0.005)
         self.declare_parameter("max_grasp_width_m", 0.060)
         self.declare_parameter("default_grasp_width_m", 0.045)
+        self.declare_parameter("position_tolerance_m", 0.01)
+        self.declare_parameter("orientation_xy_tol_rad", 0.1)
+        self.declare_parameter("orientation_z_tol_rad", 3.14)
 
         self.latest_image = None
         self.latest_base_point = None
@@ -434,15 +439,45 @@ class GeminiPickPlaceExecutor(Node):
         self.get_logger().info(f"[{label}] execution status: {status}")
         return True
 
+    def build_pose_constraints(self, pose_stamped, ee_link):
+        position_tol = float(self.get_parameter("position_tolerance_m").value)
+        xy_tol = float(self.get_parameter("orientation_xy_tol_rad").value)
+        z_tol = float(self.get_parameter("orientation_z_tol_rad").value)
+
+        constraints = Constraints()
+        constraints.name = "gemini_pose_goal"
+
+        pc = PositionConstraint()
+        pc.header = pose_stamped.header
+        pc.link_name = ee_link
+        pc.weight = 1.0
+        sphere = SolidPrimitive()
+        sphere.type = SolidPrimitive.SPHERE
+        sphere.dimensions = [position_tol]
+        pc.constraint_region.primitives.append(sphere)
+        pc.constraint_region.primitive_poses.append(pose_stamped.pose)
+        constraints.position_constraints.append(pc)
+
+        oc = OrientationConstraint()
+        oc.header = pose_stamped.header
+        oc.link_name = ee_link
+        oc.orientation = pose_stamped.pose.orientation
+        oc.absolute_x_axis_tolerance = xy_tol
+        oc.absolute_y_axis_tolerance = xy_tol
+        oc.absolute_z_axis_tolerance = z_tol
+        oc.weight = 1.0
+        constraints.orientation_constraints.append(oc)
+
+        return constraints
+
     def plan_and_execute_pose(self, pose_stamped, label):
         if self.arm_component is None:
             return False
         arm_name = str(self.get_parameter("arm_group_name").value)
         ee_link = str(self.get_parameter("end_effector_link").value)
+        constraints = self.build_pose_constraints(pose_stamped, ee_link)
         self.arm_component.set_start_state_to_current_state()
-        self.arm_component.set_goal_state(
-            pose_stamped_msg=pose_stamped, pose_link=ee_link
-        )
+        self.arm_component.set_goal_state(motion_plan_constraints=[constraints])
         return self.plan_and_execute(self.arm_component, arm_name, label)
 
     def plan_and_execute_named_arm(self, name, label):
