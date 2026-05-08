@@ -13,6 +13,10 @@ MOVEIT_JOINTS = {
     "arm_joint4",
     "arm_joint5",
     "grip_joint",
+    "front_left_wheel_joint",
+    "front_right_wheel_joint",
+    "back_left_wheel_joint",
+    "back_right_wheel_joint",
 }
 
 
