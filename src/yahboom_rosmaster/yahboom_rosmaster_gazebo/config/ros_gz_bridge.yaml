@@ -41,7 +41,7 @@
 # real-robot mecanum_drive_controller publishes on, so consumers like
 # the EKF and gemini_pick_place_executor work in both environments).
 - ros_topic_name: "mecanum_drive_controller/odom"
-  gz_topic_name: "mecanum_drive_controller/odom"
+  gz_topic_name: "/mecanum_drive_controller/odom"
   ros_type_name: "nav_msgs/msg/Odometry"
   gz_type_name: "gz.msgs.Odometry"
   direction: GZ_TO_ROS

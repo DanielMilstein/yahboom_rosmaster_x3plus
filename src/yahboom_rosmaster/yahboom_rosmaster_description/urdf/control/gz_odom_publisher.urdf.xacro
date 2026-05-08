@@ -7,7 +7,7 @@
                         name="gz::sim::systems::OdometryPublisher">
                     <odom_frame>odom</odom_frame>
                     <robot_base_frame>base_footprint</robot_base_frame>
-                    <odom_topic>mecanum_drive_controller/odom</odom_topic>
+                    <odom_topic>/mecanum_drive_controller/odom</odom_topic>
                     <dimensions>2</dimensions>
                     <odom_publish_frequency>50</odom_publish_frequency>
                 </plugin>
