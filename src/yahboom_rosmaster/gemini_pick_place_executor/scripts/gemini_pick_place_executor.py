@@ -136,6 +136,8 @@ class GeminiPickPlaceExecutor(Node):
         self.declare_parameter("position_tolerance_m", 0.01)
         self.declare_parameter("orientation_xy_tol_rad", 0.1)
         self.declare_parameter("orientation_z_tol_rad", 3.14)
+        self.declare_parameter("ik_timeout_sec", 2.0)
+        self.declare_parameter("approach_pitch_below_rad", 1.0472)  # ~60 deg below horizontal
 
         self.latest_image = None
         self.latest_base_point = None
@@ -440,6 +442,93 @@ class GeminiPickPlaceExecutor(Node):
         self.get_logger().info(f"[{label}] execution status: {status}")
         return True
 
+    def candidate_orientations(self, target_x, target_y):
+        """Generate fallback orientations from top-down to tilted, all yawed to face target."""
+        yaw = math.atan2(target_y, target_x)
+        cy = math.cos(yaw / 2.0)
+        sy = math.sin(yaw / 2.0)
+
+        results = []
+        # Original: top-down RPY=(pi, 0, 0) yawed by atan2(y,x)
+        # quat = (cos(yaw/2), sin(yaw/2), 0, 0) for fixed RPY=(pi,0,yaw) — same as top_down_quaternion(yaw).
+        results.append((cy, sy, 0.0, 0.0))
+
+        # Tilted candidates: gripper Z tilted "below horizontal" by various angles, yawed to face target.
+        # Construction: q_yaw_around_Z * q_roll_pi_around_X_in_yawed_frame * q_pitch_around_Y
+        # We approximate with a sequential body rotation from RPY(pi, -delta, yaw)
+        # where delta in (0, pi/2) moves from top-down toward forward-pointing.
+        for delta_rad in (0.4, 0.8, 1.2, 1.4):  # ~23, 46, 69, 80 deg from top-down
+            cd = math.cos(delta_rad / 2.0)
+            sd = math.sin(delta_rad / 2.0)
+            # q_top_down = (cy, sy, 0, 0) (after applying roll=pi yaw=yaw)
+            # q_pitch around body Y by -delta = (cos(-d/2), 0, sin(-d/2), 0) = (cd, 0, -sd, 0) but
+            # acting in the yawed/rolled frame -> need composition.
+            # Easier: build directly from RPY=(pi, -delta, yaw) in fixed XYZ convention.
+            # qw = cos(R/2)cos(P/2)cos(Y/2) + sin(R/2)sin(P/2)sin(Y/2)
+            # With R=pi: cos(R/2)=0, sin(R/2)=1
+            # qw = sin(P/2)sin(Y/2) = (-sd)*sy = -sd*sy
+            # qx = sin(R/2)cos(P/2)cos(Y/2) - cos(R/2)sin(P/2)sin(Y/2) = cd*cy
+            # qy = cos(R/2)sin(P/2)cos(Y/2) + sin(R/2)cos(P/2)sin(Y/2) = cd*sy
+            # qz = cos(R/2)cos(P/2)sin(Y/2) - sin(R/2)sin(P/2)cos(Y/2) = -(-sd)*cy = sd*cy
+            # but P = -delta means sin(P/2) = -sd, cos(P/2) = cd
+            qw = -sd * sy
+            qx = cd * cy
+            qy = cd * sy
+            qz = sd * cy
+            # Normalize
+            n = math.sqrt(qw * qw + qx * qx + qy * qy + qz * qz)
+            if n > 1e-9:
+                results.append((qx / n, qy / n, qz / n, qw / n))
+        return results
+
+    def plan_and_execute_pose(self, pose_stamped, label):
+        if self.arm_component is None or self.moveit is None:
+            self.get_logger().error(f"[{label}] MoveItPy not initialized")
+            return False
+        from moveit.core.robot_state import RobotState
+        from geometry_msgs.msg import Pose
+
+        arm_name = str(self.get_parameter("arm_group_name").value)
+        ee_link = str(self.get_parameter("end_effector_link").value)
+        timeout = float(self.get_parameter("ik_timeout_sec").value)
+        robot_model = self.moveit.get_robot_model()
+
+        px = float(pose_stamped.pose.position.x)
+        py = float(pose_stamped.pose.position.y)
+        pz = float(pose_stamped.pose.position.z)
+        self.get_logger().info(
+            f"[{label}] IK target pos=({px:.3f},{py:.3f},{pz:.3f}) frame={pose_stamped.header.frame_id}"
+        )
+
+        candidates = self.candidate_orientations(px, py)
+        for idx, (qx, qy, qz, qw) in enumerate(candidates):
+            attempt_pose = Pose()
+            attempt_pose.position.x = px
+            attempt_pose.position.y = py
+            attempt_pose.position.z = pz
+            attempt_pose.orientation.x = qx
+            attempt_pose.orientation.y = qy
+            attempt_pose.orientation.z = qz
+            attempt_pose.orientation.w = qw
+
+            state = RobotState(robot_model)
+            state.update()
+            ok = state.set_from_ik(arm_name, attempt_pose, ee_link, timeout)
+            if ok:
+                self.get_logger().info(
+                    f"[{label}] IK ok with orientation #{idx} "
+                    f"quat=({qx:.3f},{qy:.3f},{qz:.3f},{qw:.3f})"
+                )
+                self.arm_component.set_start_state_to_current_state()
+                self.arm_component.set_goal_state(robot_state=state)
+                return self.plan_and_execute(self.arm_component, arm_name, label)
+            self.get_logger().warn(f"[{label}] IK candidate #{idx} failed")
+
+        self.get_logger().error(
+            f"[{label}] IK failed for all {len(candidates)} candidate orientations"
+        )
+        return False
+
     def build_pose_constraints(self, pose_stamped, ee_link):
         position_tol = float(self.get_parameter("position_tolerance_m").value)
         xy_tol = float(self.get_parameter("orientation_xy_tol_rad").value)
@@ -471,16 +560,6 @@ class GeminiPickPlaceExecutor(Node):
             constraints.orientation_constraints.append(oc)
 
         return constraints
-
-    def plan_and_execute_pose(self, pose_stamped, label):
-        if self.arm_component is None:
-            return False
-        arm_name = str(self.get_parameter("arm_group_name").value)
-        ee_link = str(self.get_parameter("end_effector_link").value)
-        constraints = self.build_pose_constraints(pose_stamped, ee_link)
-        self.arm_component.set_start_state_to_current_state()
-        self.arm_component.set_goal_state(motion_plan_constraints=[constraints])
-        return self.plan_and_execute(self.arm_component, arm_name, label)
 
     def plan_and_execute_named_arm(self, name, label):
         if self.arm_component is None:

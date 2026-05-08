@@ -18,6 +18,7 @@ FORWARDED_PARAMS = [
     ("orientation_xy_tol_rad", "0.3"),
     ("orientation_z_tol_rad", "3.14"),
     ("use_orientation_constraint", "true"),
+    ("ik_timeout_sec", "2.0"),
     ("top_down_yaw", "0.0"),
     ("planning_time", "5.0"),
     ("velocity_scale", "0.3"),
