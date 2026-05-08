@@ -214,6 +214,9 @@
     <xacro:include filename="$(find yahboom_rosmaster_description)/urdf/control/velocity_control_plugin.urdf.xacro" />
     <xacro:load_velocity_control_plugin use_gazebo="$(arg use_gazebo)"/>
 
+    <xacro:include filename="$(find yahboom_rosmaster_description)/urdf/control/gz_odom_publisher.urdf.xacro" />
+    <xacro:load_gz_odom_publisher robot_name="$(arg robot_name)" use_gazebo="$(arg use_gazebo)"/>
+
     <xacro:include filename="$(find yahboom_rosmaster_description)/urdf/control/gazebo_sim_ros2_control.urdf.xacro" />
     <xacro:load_gazebo_sim_ros2_control_plugin
       robot_name="$(arg robot_name)"

@@ -1,0 +1,17 @@
+<?xml version="1.0" ?>
+<robot xmlns:xacro="http://wiki.ros.org/xacro">
+    <xacro:macro name="load_gz_odom_publisher" params="robot_name use_gazebo">
+        <xacro:if value="${use_gazebo}">
+            <gazebo>
+                <plugin filename="gz-sim-odometry-publisher-system"
+                        name="gz::sim::systems::OdometryPublisher">
+                    <odom_frame>odom</odom_frame>
+                    <robot_base_frame>base_footprint</robot_base_frame>
+                    <odom_topic>mecanum_drive_controller/odom</odom_topic>
+                    <dimensions>2</dimensions>
+                    <odom_publish_frequency>50</odom_publish_frequency>
+                </plugin>
+            </gazebo>
+        </xacro:if>
+    </xacro:macro>
+</robot>

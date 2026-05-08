@@ -29,6 +29,7 @@ FORWARDED_PARAMS = [
     ("drive_position_tol_m", "0.01"),
     ("drive_timeout_sec", "15.0"),
     ("return_after_place", "true"),
+    ("drive_mode", "auto"),
     ("stow_for_perception", "true"),
     ("restow_after_place", "true"),
     ("top_down_yaw", "0.0"),

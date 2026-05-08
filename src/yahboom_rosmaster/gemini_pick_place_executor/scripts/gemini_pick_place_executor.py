@@ -153,6 +153,9 @@ class GeminiPickPlaceExecutor(Node):
         self.declare_parameter("drive_timeout_sec", 15.0)
         self.declare_parameter("drive_settle_sec", 0.3)
         self.declare_parameter("return_after_place", True)
+        # drive_mode: "auto" tries closed-loop, falls back to open-loop if no odom; "closed_loop" or "open_loop" force.
+        self.declare_parameter("drive_mode", "auto")
+        self.declare_parameter("drive_odom_wait_sec", 1.0)
         self.declare_parameter("stow_joint_values", [-1.5708, 1.0, -0.5, 0.0, 0.0])
         self.declare_parameter("stow_for_perception", True)
         self.declare_parameter("restow_after_place", True)
@@ -263,8 +266,8 @@ class GeminiPickPlaceExecutor(Node):
 
         initial_odom = None
         if execute and drive_enabled and self.target_outside_reach_window(target_point):
-            initial_odom = self.snapshot_odom()
-            if initial_odom is None or not self.drive_to_reach(target_point):
+            initial_odom = self.snapshot_odom()  # may be None in open-loop mode
+            if not self.drive_to_reach(target_point):
                 self.get_logger().error("base drive failed; aborting")
                 return
             perceived = self.perceive_targets()
@@ -686,9 +689,9 @@ class GeminiPickPlaceExecutor(Node):
         )
         return outside
 
-    def snapshot_odom(self):
-        if not self.odom_event.wait(timeout=2.0):
-            self.get_logger().error("timed out waiting for odometry message")
+    def snapshot_odom(self, wait_sec=None):
+        timeout = float(self.get_parameter("drive_odom_wait_sec").value) if wait_sec is None else float(wait_sec)
+        if not self.odom_event.wait(timeout=timeout):
             return None
         msg = self.latest_odom
         if msg is None:
@@ -720,9 +723,21 @@ class GeminiPickPlaceExecutor(Node):
         return self.drive_relative_base(dx, dy)
 
     def drive_relative_base(self, dx_base, dy_base):
-        odom0 = self.snapshot_odom()
-        if odom0 is None:
-            return False
+        mode = str(self.get_parameter("drive_mode").value).lower()
+        odom0 = None
+        if mode in ("auto", "closed_loop"):
+            odom0 = self.snapshot_odom()
+            if odom0 is None and mode == "closed_loop":
+                self.get_logger().error("drive_relative_base: closed_loop requested but no odom available")
+                return False
+            if odom0 is None:
+                self.get_logger().warn(
+                    "drive_relative_base: no odometry, falling back to open-loop timed drive"
+                )
+                return self.drive_relative_base_open_loop(dx_base, dy_base)
+        else:
+            return self.drive_relative_base_open_loop(dx_base, dy_base)
+
         x0 = odom0["x"]
         y0 = odom0["y"]
         yaw0 = odom0["yaw"]
@@ -793,11 +808,49 @@ class GeminiPickPlaceExecutor(Node):
         self.publish_zero_velocity()
         return False
 
+    def drive_relative_base_open_loop(self, dx_base, dy_base):
+        max_speed = float(self.get_parameter("drive_max_lin_speed_mps").value)
+        settle = float(self.get_parameter("drive_settle_sec").value)
+        dist = math.sqrt(dx_base * dx_base + dy_base * dy_base)
+        if dist < 1e-6:
+            self.publish_zero_velocity()
+            return True
+        duration = dist / max_speed
+        vx = max_speed * dx_base / dist
+        vy = max_speed * dy_base / dist
+        self.get_logger().info(
+            f"open-loop drive: dx={dx_base:.3f} dy={dy_base:.3f} -> vx={vx:.3f} vy={vy:.3f} for {duration:.2f}s"
+        )
+        period = 0.05  # 20 Hz
+        end_time = self.get_clock().now().nanoseconds / 1e9 + duration
+        while rclpy.ok():
+            now = self.get_clock().now().nanoseconds / 1e9
+            if now >= end_time:
+                break
+            twist = TwistStamped()
+            twist.header.stamp = self.get_clock().now().to_msg()
+            twist.header.frame_id = "base_link"
+            twist.twist.linear.x = vx
+            twist.twist.linear.y = vy
+            self.cmd_vel_pub.publish(twist)
+            time.sleep(period)
+        self.publish_zero_velocity()
+        if settle > 0.0:
+            time.sleep(settle)
+        self.get_logger().info("open-loop drive: done")
+        return True
+
     def drive_back_to(self, initial_odom):
         if initial_odom is None:
+            # Open-loop fallback: we don't know how far we drove, so reverse the most-recent
+            # commanded delta is not tracked; just no-op rather than misposition.
+            self.get_logger().warn(
+                "drive_back_to: no initial odometry recorded; skipping return"
+            )
             return False
         cur = self.snapshot_odom()
         if cur is None:
+            self.get_logger().warn("drive_back_to: no current odometry; skipping return")
             return False
         # World-frame error is initial - current; convert to base-frame for drive_relative_base.
         err_x_w = initial_odom["x"] - cur["x"]
