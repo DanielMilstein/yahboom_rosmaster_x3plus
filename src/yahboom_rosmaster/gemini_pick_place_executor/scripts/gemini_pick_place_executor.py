@@ -53,6 +53,21 @@ def top_down_quaternion(yaw=0.0):
     return (math.cos(half), math.sin(half), 0.0, 0.0)
 
 
+def rotate_vector_by_quat(v, qx, qy, qz, qw):
+    """Apply rotation R(Q) to a 3-vector v. Returns (rx, ry, rz)."""
+    x, y, z = float(v[0]), float(v[1]), float(v[2])
+    rx = (1.0 - 2.0 * (qy * qy + qz * qz)) * x \
+        + 2.0 * (qx * qy - qz * qw) * y \
+        + 2.0 * (qx * qz + qy * qw) * z
+    ry = 2.0 * (qx * qy + qz * qw) * x \
+        + (1.0 - 2.0 * (qx * qx + qz * qz)) * y \
+        + 2.0 * (qy * qz - qx * qw) * z
+    rz = 2.0 * (qx * qz - qy * qw) * x \
+        + 2.0 * (qy * qz + qx * qw) * y \
+        + (1.0 - 2.0 * (qx * qx + qy * qy)) * z
+    return rx, ry, rz
+
+
 # Gripper calibration: object width -> servo angle (per hardware datasheet).
 # The Gazebo/URDF grip_joint runs from 0 rad (closed, servo=180 deg) to
 # -1.54 rad (max open, servo=0 deg); we assume a linear servo-to-grip_joint
@@ -128,6 +143,12 @@ class GeminiPickPlaceExecutor(Node):
         self.declare_parameter("gripper_open_named", "open")
         self.declare_parameter("gripper_closed_named", "close")
         self.declare_parameter("gripper_tcp_offset_z", 0.02)
+        # Fingertip position in arm_link5's local frame. The fingertip is typically
+        # along arm_link5's +Z axis (the joint-5 roll axis = gripper approach
+        # direction). For each candidate orientation Q, the wrist IK target is
+        # computed as `fingertip_target - R(Q) * gripper_tip_offset_xyz`, so the
+        # fingertip lands on the perceived target regardless of orientation.
+        self.declare_parameter("gripper_tip_offset_xyz", [0.0, 0.0, 0.09])
         self.declare_parameter("use_orientation_constraint", True)
         self.declare_parameter("top_down_yaw", 0.0)
         self.declare_parameter("planning_time", 5.0)
@@ -500,7 +521,13 @@ class GeminiPickPlaceExecutor(Node):
         self.marker_pub.publish(markers)
 
     def top_down_pose(self, point, lift_z):
-        offset = float(self.get_parameter("gripper_tcp_offset_z").value)
+        """Build the desired *fingertip* PoseStamped at the perception point + lift.
+
+        The wrist IK target is computed per-orientation in plan_and_execute_pose
+        using gripper_tip_offset_xyz, so we no longer need to add a wrist-z bias
+        here. Orientation is a placeholder (top-down yaw) — plan_and_execute_pose
+        iterates over candidates.
+        """
         yaw = float(self.get_parameter("top_down_yaw").value)
         qx, qy, qz, qw = top_down_quaternion(yaw)
         pose = PoseStamped()
@@ -508,7 +535,7 @@ class GeminiPickPlaceExecutor(Node):
         pose.header.stamp = self.get_clock().now().to_msg()
         pose.pose.position.x = float(point.point.x)
         pose.pose.position.y = float(point.point.y)
-        pose.pose.position.z = float(point.point.z) + float(lift_z) + offset
+        pose.pose.position.z = float(point.point.z) + float(lift_z)
         pose.pose.orientation.x = qx
         pose.pose.orientation.y = qy
         pose.pose.orientation.z = qz
@@ -588,19 +615,39 @@ class GeminiPickPlaceExecutor(Node):
         timeout = float(self.get_parameter("ik_timeout_sec").value)
         robot_model = self.moveit.get_robot_model()
 
-        px = float(pose_stamped.pose.position.x)
-        py = float(pose_stamped.pose.position.y)
-        pz = float(pose_stamped.pose.position.z)
+        # Treat the incoming pose's *position* as the desired FINGERTIP target.
+        # For each candidate orientation Q, compute the wrist IK target as
+        # `fingertip - R(Q) * tip_offset_local` so the fingertip lands at the
+        # perceived point regardless of the orientation chosen.
+        fx = float(pose_stamped.pose.position.x)
+        fy = float(pose_stamped.pose.position.y)
+        fz = float(pose_stamped.pose.position.z)
+        tip_offset_param = list(self.get_parameter("gripper_tip_offset_xyz").value)
+        try:
+            tip_offset = [float(v) for v in tip_offset_param]
+            if len(tip_offset) != 3:
+                raise ValueError(f"expected 3 elements, got {len(tip_offset)}")
+        except Exception as exc:
+            self.get_logger().warn(
+                f"[{label}] invalid gripper_tip_offset_xyz ({exc}); using [0,0,0.09]"
+            )
+            tip_offset = [0.0, 0.0, 0.09]
+
         self.get_logger().info(
-            f"[{label}] IK target pos=({px:.3f},{py:.3f},{pz:.3f}) frame={pose_stamped.header.frame_id}"
+            f"[{label}] fingertip target=({fx:.3f},{fy:.3f},{fz:.3f}) "
+            f"frame={pose_stamped.header.frame_id} tip_offset_local={tip_offset}"
         )
 
-        candidates = self.candidate_orientations(px, py)
+        candidates = self.candidate_orientations(fx, fy)
         for idx, (qx, qy, qz, qw) in enumerate(candidates):
+            ox, oy, oz = rotate_vector_by_quat(tip_offset, qx, qy, qz, qw)
+            wx = fx - ox
+            wy = fy - oy
+            wz = fz - oz
             attempt_pose = Pose()
-            attempt_pose.position.x = px
-            attempt_pose.position.y = py
-            attempt_pose.position.z = pz
+            attempt_pose.position.x = wx
+            attempt_pose.position.y = wy
+            attempt_pose.position.z = wz
             attempt_pose.orientation.x = qx
             attempt_pose.orientation.y = qy
             attempt_pose.orientation.z = qz
