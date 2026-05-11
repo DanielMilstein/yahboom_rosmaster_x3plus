@@ -24,16 +24,16 @@
         <visual>
             <origin xyz="0 0 0" rpy="0 0 0"/>
             <geometry>
-                <mesh filename="file://$(find yahboom_rosmaster_description)/meshes/rosmaster_x3_plus/visual/base_link.STL"/>
+                <mesh filename="file://$(find yahboom_rosmaster_description)/meshes/rosmaster_x3/visual/base_link_X3.STL"/>
             </geometry>
             <material name="x3_plus_green">
                 <color rgba="0 0.7 0 1"/>
             </material>
         </visual>
         <collision>
-            <origin xyz="0 0 0" rpy="0 0 0"/>
+            <origin xyz="0 0 0.06" rpy="0 0 0"/>
             <geometry>
-                <mesh filename="file://$(find yahboom_rosmaster_description)/meshes/rosmaster_x3_plus/collision/base_link.STL"/>
+                <box size="0.20 0.16 0.10"/>
             </geometry>
         </collision>
     </link>
