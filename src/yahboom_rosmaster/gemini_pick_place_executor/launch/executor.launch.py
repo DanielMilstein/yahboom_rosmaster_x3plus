@@ -11,9 +11,9 @@ from moveit_configs_utils import MoveItConfigsBuilder
 FORWARDED_PARAMS = [
     ("execute", "false"),
     ("task", "put the red can in the blue bin"),
-    ("pick_lift_m", "0.03"),
-    ("place_lift_m", "0.03"),
-    ("gripper_tcp_offset_z", "0.03"),
+    ("pick_lift_m", "0.02"),
+    ("place_lift_m", "0.02"),
+    ("gripper_tcp_offset_z", "0.02"),
     ("position_tolerance_m", "0.01"),
     ("orientation_xy_tol_rad", "0.3"),
     ("orientation_z_tol_rad", "3.14"),

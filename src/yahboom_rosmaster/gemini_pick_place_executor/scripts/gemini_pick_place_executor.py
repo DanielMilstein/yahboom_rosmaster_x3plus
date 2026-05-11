@@ -112,8 +112,8 @@ class GeminiPickPlaceExecutor(Node):
         self.declare_parameter("auto_start", True)
         self.declare_parameter("project_timeout_sec", 3.0)
         self.declare_parameter("service_timeout_sec", 10.0)
-        self.declare_parameter("pick_lift_m", 0.03)
-        self.declare_parameter("place_lift_m", 0.03)
+        self.declare_parameter("pick_lift_m", 0.02)
+        self.declare_parameter("place_lift_m", 0.02)
         self.declare_parameter("destination_point_source", "box_bias")
         self.declare_parameter("destination_box_y_fraction", 0.5)
         self.declare_parameter("destination_box_x_fraction", 0.5)
@@ -127,7 +127,7 @@ class GeminiPickPlaceExecutor(Node):
         self.declare_parameter("home_named", "up")
         self.declare_parameter("gripper_open_named", "open")
         self.declare_parameter("gripper_closed_named", "close")
-        self.declare_parameter("gripper_tcp_offset_z", 0.03)
+        self.declare_parameter("gripper_tcp_offset_z", 0.02)
         self.declare_parameter("use_orientation_constraint", True)
         self.declare_parameter("top_down_yaw", 0.0)
         self.declare_parameter("planning_time", 5.0)
@@ -619,8 +619,30 @@ class GeminiPickPlaceExecutor(Node):
                 return self.plan_and_execute(self.arm_component, arm_name, label)
             self.get_logger().warn(f"[{label}] IK candidate #{idx} failed")
 
+        self.get_logger().warn(
+            f"[{label}] all {len(candidates)} candidate orientations failed; "
+            "trying position-only fallback"
+        )
+        position_tol = float(self.get_parameter("position_tolerance_m").value)
+        fallback = Constraints()
+        fallback.name = "position_only_goal"
+        pc = PositionConstraint()
+        pc.header = pose_stamped.header
+        pc.link_name = ee_link
+        pc.weight = 1.0
+        sphere = SolidPrimitive()
+        sphere.type = SolidPrimitive.SPHERE
+        sphere.dimensions = [position_tol]
+        pc.constraint_region.primitives.append(sphere)
+        pc.constraint_region.primitive_poses.append(pose_stamped.pose)
+        fallback.position_constraints.append(pc)
+        self.arm_component.set_start_state_to_current_state()
+        self.arm_component.set_goal_state(motion_plan_constraints=[fallback])
+        if self.plan_and_execute(self.arm_component, arm_name, label):
+            self.get_logger().info(f"[{label}] position-only fallback succeeded")
+            return True
         self.get_logger().error(
-            f"[{label}] IK failed for all {len(candidates)} candidate orientations"
+            f"[{label}] IK + position-only fallback both failed"
         )
         return False
 
