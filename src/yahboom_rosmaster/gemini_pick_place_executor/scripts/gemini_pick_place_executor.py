@@ -872,7 +872,30 @@ class GeminiPickPlaceExecutor(Node):
         gripper_name = str(self.get_parameter("gripper_group_name").value)
         robot_model = self.moveit.get_robot_model()
         state = RobotState(robot_model)
-        state.set_joint_group_positions(gripper_name, [float(grip_joint_rad)])
+        target_value = float(grip_joint_rad)
+
+        # grip_group is declared in the SRDF by links, which pulls in grip_joint
+        # plus its 5 mimic joints (6 variables total). set_joint_group_positions
+        # asserts the input vector matches that count; we want to set the single
+        # active joint and let mimics propagate via state.update().
+        try:
+            state.set_joint_group_active_positions(gripper_name, [target_value])
+        except (AttributeError, TypeError) as exc:
+            self.get_logger().info(
+                f"[{label}] gripper using set_variable_position fallback ({exc})"
+            )
+            try:
+                state.set_variable_position("grip_joint", target_value)
+            except Exception as inner:
+                self.get_logger().error(
+                    f"[{label}] could not set grip_joint via fallback: {inner}"
+                )
+                return False
+        try:
+            state.update()
+        except Exception:
+            pass
+
         self.gripper_component.set_start_state_to_current_state()
         self.gripper_component.set_goal_state(robot_state=state)
         return self.plan_and_execute(self.gripper_component, gripper_name, label)
