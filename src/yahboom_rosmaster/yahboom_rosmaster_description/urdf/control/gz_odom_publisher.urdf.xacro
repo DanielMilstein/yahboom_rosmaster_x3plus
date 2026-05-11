@@ -1,13 +1,19 @@
 <?xml version="1.0" ?>
 <robot xmlns:xacro="http://wiki.ros.org/xacro">
+    <!--
+      Publishes the model's ground-truth pose as nav_msgs/Odometry from Gazebo,
+      bridged to mecanum_drive_controller/odom by ros_gz_bridge so consumers
+      (executor closed-loop drive, EKF) work in both sim and real. Plugin
+      filename uses the Ignition Fortress (gz Sim 6) naming.
+    -->
     <xacro:macro name="load_gz_odom_publisher" params="robot_name use_gazebo">
         <xacro:if value="${use_gazebo}">
             <gazebo>
-                <plugin filename="gz-sim-odometry-publisher-system"
-                        name="gz::sim::systems::OdometryPublisher">
+                <plugin filename="ignition-gazebo-odometry-publisher-system"
+                        name="ignition::gazebo::systems::OdometryPublisher">
                     <odom_frame>odom</odom_frame>
                     <robot_base_frame>base_footprint</robot_base_frame>
-                    <odom_topic>/mecanum_drive_controller/odom</odom_topic>
+                    <odom_topic>/model/${robot_name}/odometry</odom_topic>
                     <dimensions>2</dimensions>
                     <odom_publish_frequency>50</odom_publish_frequency>
                 </plugin>

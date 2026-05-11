@@ -24,16 +24,16 @@
         <visual>
             <origin xyz="0 0 0" rpy="0 0 0"/>
             <geometry>
-                <mesh filename="file://$(find yahboom_rosmaster_description)/meshes/rosmaster_x3/visual/base_link_X3.STL"/>
+                <mesh filename="file://$(find yahboom_rosmaster_description)/meshes/rosmaster_x3_plus/visual/base_link.STL"/>
             </geometry>
             <material name="x3_plus_green">
                 <color rgba="0 0.7 0 1"/>
             </material>
         </visual>
         <collision>
-            <origin xyz="0 0 0.06" rpy="0 0 0"/>
+            <origin xyz="0 0 0" rpy="0 0 0"/>
             <geometry>
-                <box size="0.20 0.16 0.10"/>
+                <mesh filename="file://$(find yahboom_rosmaster_description)/meshes/rosmaster_x3_plus/collision/base_link.STL"/>
             </geometry>
         </collision>
     </link>
@@ -211,11 +211,11 @@
         </gazebo>
     </xacro:if>
 
-    <xacro:include filename="$(find yahboom_rosmaster_description)/urdf/mech/mecanum_wheel.urdf.xacro"/>
-    <xacro:mecanum_wheel prefix="$(arg prefix)" side="front_left"  x_reflect="1"  y_reflect="1"  z_offset="-0.0435"/>
-    <xacro:mecanum_wheel prefix="$(arg prefix)" side="front_right" x_reflect="1"  y_reflect="-1" z_offset="-0.0435"/>
-    <xacro:mecanum_wheel prefix="$(arg prefix)" side="back_left"   x_reflect="-1" y_reflect="1"  z_offset="-0.0435"/>
-    <xacro:mecanum_wheel prefix="$(arg prefix)" side="back_right"  x_reflect="-1" y_reflect="-1" z_offset="-0.0435"/>
+    <xacro:include filename="$(find yahboom_rosmaster_description)/urdf/control/velocity_control_plugin.urdf.xacro" />
+    <xacro:load_velocity_control_plugin use_gazebo="$(arg use_gazebo)"/>
+
+    <xacro:include filename="$(find yahboom_rosmaster_description)/urdf/control/gz_odom_publisher.urdf.xacro" />
+    <xacro:load_gz_odom_publisher robot_name="$(arg robot_name)" use_gazebo="$(arg use_gazebo)"/>
 
     <xacro:include filename="$(find yahboom_rosmaster_description)/urdf/control/gazebo_sim_ros2_control.urdf.xacro" />
     <xacro:load_gazebo_sim_ros2_control_plugin

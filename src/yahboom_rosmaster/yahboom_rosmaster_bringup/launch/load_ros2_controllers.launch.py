@@ -60,18 +60,6 @@ def generate_launch_description():
         condition=IfCondition(PythonExpression(["'", robot_name, "' == 'rosmaster_x3_plus'"]))
     )
 
-    start_x3_plus_mecanum_controller_cmd = ExecuteProcess(
-        cmd=[
-            'ros2', 'run', 'controller_manager', 'spawner',
-            'mecanum_drive_controller',
-            '--controller-manager-timeout', '120',
-            '--service-call-timeout', '90',
-            '--switch-timeout', '90',
-        ],
-        output='screen',
-        condition=IfCondition(PythonExpression(["'", robot_name, "' == 'rosmaster_x3_plus'"]))
-    )
-
     start_x3_plus_arm_controller_cmd = ExecuteProcess(
         cmd=[
             'ros2', 'run', 'controller_manager', 'spawner',
@@ -100,10 +88,6 @@ def generate_launch_description():
         period=25.0,
         actions=[start_x3_controllers_cmd, start_x3_plus_joint_state_broadcaster_cmd]
     )
-    delayed_mecanum_start = TimerAction(
-        period=35.0,
-        actions=[start_x3_plus_mecanum_controller_cmd]
-    )
     delayed_arm_start = TimerAction(
         period=45.0,
         actions=[start_x3_plus_arm_controller_cmd]
@@ -119,7 +103,6 @@ def generate_launch_description():
     # Add the actions to the launch description in sequence
     ld.add_action(declare_robot_name_cmd)
     ld.add_action(delayed_start)
-    ld.add_action(delayed_mecanum_start)
     ld.add_action(delayed_arm_start)
     ld.add_action(delayed_gripper_start)
 
