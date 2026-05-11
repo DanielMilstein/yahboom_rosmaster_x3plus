@@ -20,6 +20,7 @@ FORWARDED_PARAMS = [
     ("use_orientation_constraint", "true"),
     ("ik_timeout_sec", "2.0"),
     ("enable_base_drive", "true"),
+    ("drive_axes", "y_only"),
     ("sweet_x", "0.18"),
     ("sweet_y", "0.0"),
     ("reach_window_x_min", "0.10"),

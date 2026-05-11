@@ -147,6 +147,7 @@ class GeminiPickPlaceExecutor(Node):
         self.declare_parameter("reach_window_x_min", 0.10)
         self.declare_parameter("reach_window_x_max", 0.25)
         self.declare_parameter("reach_window_y_half", 0.05)
+        self.declare_parameter("drive_axes", "y_only")
         self.declare_parameter("drive_max_lin_speed_mps", 0.10)
         self.declare_parameter("drive_kp", 1.5)
         self.declare_parameter("drive_position_tol_m", 0.01)
@@ -681,9 +682,16 @@ class GeminiPickPlaceExecutor(Node):
         x_min = float(self.get_parameter("reach_window_x_min").value)
         x_max = float(self.get_parameter("reach_window_x_max").value)
         y_half = float(self.get_parameter("reach_window_y_half").value)
-        outside = x < x_min or x > x_max or abs(y) > y_half
+        mode = str(self.get_parameter("drive_axes").value).lower()
+        check_x = mode != "y_only"
+        check_y = mode != "x_only"
+        outside = False
+        if check_x and (x < x_min or x > x_max):
+            outside = True
+        if check_y and abs(y) > y_half:
+            outside = True
         self.get_logger().info(
-            f"reach window check: target=({x:.3f},{y:.3f}) "
+            f"reach window check (mode={mode}): target=({x:.3f},{y:.3f}) "
             f"window x=[{x_min:.3f},{x_max:.3f}] |y|<={y_half:.3f} -> "
             f"{'outside' if outside else 'inside'}"
         )
@@ -743,11 +751,27 @@ class GeminiPickPlaceExecutor(Node):
         )
         ok = self.drive_relative_base(dx, dy)
         if ok:
-            point.point.x = sweet_x
-            point.point.y = sweet_y
+            axes = str(self.get_parameter("drive_axes").value).lower()
+            if axes in ("xy", "x_only"):
+                point.point.x = sweet_x
+            if axes in ("xy", "y_only"):
+                point.point.y = sweet_y
         return ok
 
     def drive_relative_base(self, dx_base, dy_base):
+        axes = str(self.get_parameter("drive_axes").value).lower()
+        if axes == "y_only":
+            if abs(dx_base) > 1e-6:
+                self.get_logger().info(
+                    f"drive_relative_base: drive_axes=y_only; dropping dx={dx_base:.3f}"
+                )
+            dx_base = 0.0
+        elif axes == "x_only":
+            if abs(dy_base) > 1e-6:
+                self.get_logger().info(
+                    f"drive_relative_base: drive_axes=x_only; dropping dy={dy_base:.3f}"
+                )
+            dy_base = 0.0
         mode = str(self.get_parameter("drive_mode").value).lower()
         odom0 = None
         if mode in ("auto", "closed_loop"):
