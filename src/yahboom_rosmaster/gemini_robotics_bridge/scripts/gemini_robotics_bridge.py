@@ -425,6 +425,10 @@ class GeminiRoboticsBridge(Node):
         super().__init__("gemini_robotics_bridge")
 
         self.declare_parameter("api_key_env", "GEMINI_API_KEY")
+        self.declare_parameter(
+            "api_key_envs",
+            ["GEMINI_API_KEY", "GEMINI_API_KEY_2", "GEMINI_API_KEY_3"],
+        )
         self.declare_parameter("model_name", "gemini-robotics-er-1.6-preview")
         self.declare_parameter("request_timeout_sec", 60.0)
         self.declare_parameter("max_retries", 2)
@@ -435,11 +439,23 @@ class GeminiRoboticsBridge(Node):
         self.declare_parameter("thinking_budget", 0)
 
         self.api_key_env = self.get_parameter("api_key_env").value
-        api_key = os.environ.get(self.api_key_env)
-        if not api_key:
+
+        env_list_param = list(self.get_parameter("api_key_envs").value)
+        env_names = [name for name in env_list_param if name] or [self.api_key_env]
+
+        api_keys, env_names_used = [], []
+        for name in env_names:
+            val = os.environ.get(name)
+            if val:
+                api_keys.append(val)
+                env_names_used.append(name)
+            else:
+                self.get_logger().info(f"{name} not set; skipping")
+
+        if not api_keys:
             raise RuntimeError(
-                f"{self.api_key_env} is not set. Export an API key before starting "
-                "gemini_robotics_bridge."
+                f"none of {env_names} are set; export at least one API key before "
+                "starting gemini_robotics_bridge."
             )
 
         try:
@@ -451,8 +467,15 @@ class GeminiRoboticsBridge(Node):
                 "src/yahboom_rosmaster/gemini_robotics_bridge/requirements-gemini.txt`."
             ) from exc
 
+        self.api_keys = api_keys
+        self.api_key_envs_used = env_names_used
+        self.active_key_index = 0
         self.genai = genai
-        self.client = self.create_genai_client(genai, api_key)
+        self.client = self.create_genai_client(genai, self.api_keys[0])
+        self.get_logger().info(
+            f"Loaded {len(self.api_keys)} API key(s) from {self.api_key_envs_used}; "
+            f"starting with {self.api_key_envs_used[0]}"
+        )
         self.system_prompt = read_prompt("gemini_pick_place_system.txt")
         self.retry_prompt = read_prompt("gemini_pick_place_retry.txt")
         self.log_dir = Path(str(self.get_parameter("log_dir").value)).expanduser()
@@ -462,6 +485,26 @@ class GeminiRoboticsBridge(Node):
             GeminiPickPlace, "gemini_pick_place", self.handle_pick_place
         )
         self.get_logger().info("Gemini Robotics bridge ready on /gemini_pick_place")
+
+    def _is_quota_or_auth_error(self, exc):
+        msg = str(exc).lower()
+        indicators = (
+            "quota", "rate limit", "rate_limit", "429",
+            "resource_exhausted", "resource exhausted",
+            "permission_denied", "permission denied",
+            "unauthorized", "401", "403", "forbidden",
+        )
+        return any(ind in msg for ind in indicators)
+
+    def _rotate_api_key(self):
+        self.active_key_index = (self.active_key_index + 1) % len(self.api_keys)
+        next_env = self.api_key_envs_used[self.active_key_index]
+        self.get_logger().warn(
+            f"rotating to API key #{self.active_key_index + 1} ({next_env})"
+        )
+        self.client = self.create_genai_client(
+            self.genai, self.api_keys[self.active_key_index]
+        )
 
     def create_genai_client(self, genai, api_key):
         timeout_ms = int(float(self.get_parameter("request_timeout_sec").value) * 1000.0)
@@ -636,24 +679,46 @@ class GeminiRoboticsBridge(Node):
             config["thinking_config"] = {"thinking_budget": thinking_budget}
 
         model_name = self.get_parameter("model_name").value
-        try:
-            response = self.client.models.generate_content(
-                model=model_name,
-                contents=contents,
-                config=config,
-            )
-        except TypeError:
-            config.pop("thinking_config", None)
-            response = self.client.models.generate_content(
-                model=model_name,
-                contents=contents,
-                config=config,
-            )
 
-        raw_text = text_from_response(response).strip()
-        if not raw_text:
-            raise RuntimeError("Gemini response contained no text")
-        return raw_text
+        last_exception = None
+        keys_tried = 0
+        while keys_tried < len(self.api_keys):
+            try:
+                try:
+                    response = self.client.models.generate_content(
+                        model=model_name,
+                        contents=contents,
+                        config=config,
+                    )
+                except TypeError:
+                    config.pop("thinking_config", None)
+                    response = self.client.models.generate_content(
+                        model=model_name,
+                        contents=contents,
+                        config=config,
+                    )
+                raw_text = text_from_response(response).strip()
+                if not raw_text:
+                    raise RuntimeError("Gemini response contained no text")
+                return raw_text
+            except Exception as exc:
+                last_exception = exc
+                if not self._is_quota_or_auth_error(exc):
+                    raise
+                keys_tried += 1
+                if keys_tried >= len(self.api_keys):
+                    break
+                self.get_logger().warn(
+                    f"key #{self.active_key_index + 1} "
+                    f"({self.api_key_envs_used[self.active_key_index]}) "
+                    f"hit quota/auth error: {exc}; rotating"
+                )
+                self._rotate_api_key()
+
+        raise RuntimeError(
+            f"all {len(self.api_keys)} API key(s) exhausted on quota/auth errors; "
+            f"last error: {last_exception}"
+        )
 
     def acceptance_decision(self, result):
         status = result.get("status")
