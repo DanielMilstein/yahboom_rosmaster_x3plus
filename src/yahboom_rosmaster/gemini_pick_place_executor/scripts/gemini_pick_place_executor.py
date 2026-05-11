@@ -174,6 +174,10 @@ class GeminiPickPlaceExecutor(Node):
         self.declare_parameter("reach_window_x_max", 0.25)
         self.declare_parameter("reach_window_y_half", 0.05)
         self.declare_parameter("drive_axes", "y_only")
+        self.declare_parameter("base_search_dx_range_m", [-0.30, 0.30])
+        self.declare_parameter("base_search_dy_range_m", [-0.30, 0.30])
+        self.declare_parameter("base_search_step_m", 0.03)
+        self.declare_parameter("ik_search_timeout_sec", 0.3)
         self.declare_parameter("drive_max_lin_speed_mps", 0.10)
         self.declare_parameter("drive_kp", 1.5)
         self.declare_parameter("drive_position_tol_m", 0.01)
@@ -293,9 +297,12 @@ class GeminiPickPlaceExecutor(Node):
         self.sanitize_destination_z(target_point, destination_point)
 
         initial_odom = None
-        if execute and drive_enabled and self.target_outside_reach_window(target_point):
+        if execute and drive_enabled:
+            pick_lift = float(self.get_parameter("pick_lift_m").value)
             initial_odom = self.snapshot_odom()  # may be None in open-loop mode
-            if not self.drive_to_reach(target_point):
+            if not self.drive_to_feasible(
+                target_point, pick_lift, "drive_to_reach_target"
+            ):
                 self.get_logger().error("base drive failed; aborting")
                 return
             perceived = self.perceive_targets()
@@ -816,6 +823,129 @@ class GeminiPickPlaceExecutor(Node):
         msg.header.frame_id = "base_link"
         self.cmd_vel_pub.publish(msg)
 
+    def find_feasible_drive_for_point(self, point, lift_z):
+        """Search candidate base displacements (dx, dy) for one where arm IK
+        is feasible for the fingertip target at (point.x, point.y, point.z + lift_z).
+
+        Returns (dx, dy, orientation_idx) of the smallest-norm displacement
+        that succeeds, or None if no candidate in the search range works.
+        """
+        if self.arm_component is None or self.moveit is None:
+            return None
+        from moveit.core.robot_state import RobotState
+        from geometry_msgs.msg import Pose
+
+        arm_name = str(self.get_parameter("arm_group_name").value)
+        ee_link = str(self.get_parameter("end_effector_link").value)
+        timeout = float(self.get_parameter("ik_search_timeout_sec").value)
+        robot_model = self.moveit.get_robot_model()
+
+        tip_offset_param = list(self.get_parameter("gripper_tip_offset_xyz").value)
+        try:
+            tip_offset = [float(v) for v in tip_offset_param]
+            if len(tip_offset) != 3:
+                raise ValueError(f"expected 3 elements, got {len(tip_offset)}")
+        except Exception as exc:
+            self.get_logger().warn(
+                f"find_feasible_drive: invalid gripper_tip_offset_xyz ({exc}); "
+                "using [0,0,-0.12]"
+            )
+            tip_offset = [0.0, 0.0, -0.12]
+
+        step = float(self.get_parameter("base_search_step_m").value)
+        dx_range = list(self.get_parameter("base_search_dx_range_m").value)
+        dy_range = list(self.get_parameter("base_search_dy_range_m").value)
+        if len(dx_range) != 2 or len(dy_range) != 2 or step <= 0.0:
+            self.get_logger().error(
+                "find_feasible_drive: invalid search ranges or step; "
+                f"dx_range={dx_range} dy_range={dy_range} step={step}"
+            )
+            return None
+
+        axes_mode = str(self.get_parameter("drive_axes").value).lower()
+
+        # Build candidate dx, dy lists honoring drive_axes.
+        def make_range(lo, hi, step):
+            if hi < lo:
+                return [0.0]
+            n = int(math.floor((hi - lo) / step)) + 1
+            return [lo + i * step for i in range(n)]
+
+        if axes_mode == "y_only":
+            dx_values = [0.0]
+            dy_values = make_range(dy_range[0], dy_range[1], step)
+        elif axes_mode == "x_only":
+            dx_values = make_range(dx_range[0], dx_range[1], step)
+            dy_values = [0.0]
+        else:
+            dx_values = make_range(dx_range[0], dx_range[1], step)
+            dy_values = make_range(dy_range[0], dy_range[1], step)
+
+        # Order candidates by ascending distance from (0, 0).
+        candidates = sorted(
+            ((dx, dy) for dx in dx_values for dy in dy_values),
+            key=lambda d: d[0] * d[0] + d[1] * d[1],
+        )
+
+        # Pre-compute orientation list once per (dx, dy) since it depends on (fx_hypo, fy_hypo).
+        fx_world = float(point.point.x)
+        fy_world = float(point.point.y)
+        fz = float(point.point.z) + float(lift_z)
+
+        for cand_idx, (dx, dy) in enumerate(candidates):
+            fx = fx_world - dx
+            fy = fy_world - dy
+            orientations = self.candidate_orientations(fx, fy)
+            for orient_idx, (qx, qy, qz, qw) in enumerate(orientations):
+                ox, oy, oz = rotate_vector_by_quat(tip_offset, qx, qy, qz, qw)
+                wx = fx - ox
+                wy = fy - oy
+                wz = fz - oz
+                attempt_pose = Pose()
+                attempt_pose.position.x = wx
+                attempt_pose.position.y = wy
+                attempt_pose.position.z = wz
+                attempt_pose.orientation.x = qx
+                attempt_pose.orientation.y = qy
+                attempt_pose.orientation.z = qz
+                attempt_pose.orientation.w = qw
+
+                state = RobotState(robot_model)
+                state.update()
+                if state.set_from_ik(arm_name, attempt_pose, ee_link, timeout):
+                    self.get_logger().info(
+                        f"find_feasible_drive: feasible at dx={dx:.3f} dy={dy:.3f} "
+                        f"orient #{orient_idx} after {cand_idx + 1} candidates"
+                    )
+                    return dx, dy, orient_idx
+        self.get_logger().warn(
+            f"find_feasible_drive: no feasible offset in {len(candidates)} candidates "
+            f"(point=({fx_world:.3f},{fy_world:.3f},{point.point.z:.3f}), lift={lift_z:.3f})"
+        )
+        return None
+
+    def drive_to_feasible(self, point, lift_z, label):
+        result = self.find_feasible_drive_for_point(point, lift_z)
+        if result is None:
+            self.get_logger().error(
+                f"[{label}] no feasible base offset found in search range"
+            )
+            return False
+        dx, dy, orient_idx = result
+        self.get_logger().info(
+            f"[{label}] feasible base offset dx={dx:.3f} dy={dy:.3f} "
+            f"(orientation #{orient_idx}); driving"
+        )
+        if not self.drive_relative_base(dx, dy):
+            return False
+        # Reflect the base move in the point's coordinates (now in new base frame).
+        axes_mode = str(self.get_parameter("drive_axes").value).lower()
+        if axes_mode in ("xy", "x_only"):
+            point.point.x = float(point.point.x) - dx
+        if axes_mode in ("xy", "y_only"):
+            point.point.y = float(point.point.y) - dy
+        return True
+
     def drive_to_reach(self, target_point):
         sweet_x = float(self.get_parameter("sweet_x").value)
         sweet_y = float(self.get_parameter("sweet_y").value)
@@ -1081,7 +1211,9 @@ class GeminiPickPlaceExecutor(Node):
              lambda: self.plan_and_execute_pose(
                  self.top_down_pose(target_point, pick_lift), "06_lift")),
             ("06b_drive_to_destination",
-             lambda: self.drive_to_reach_point(destination_point, "06b_drive_to_destination")),
+             lambda: self.drive_to_feasible(
+                 destination_point, place_lift, "06b_drive_to_destination"
+             )),
             ("07_pre_place",
              lambda: self.plan_and_execute_pose(
                  self.top_down_pose(destination_point, place_lift), "07_pre_place")),
