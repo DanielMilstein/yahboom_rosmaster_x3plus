@@ -138,7 +138,7 @@ class GeminiPickPlaceExecutor(Node):
         self.declare_parameter("execute", False)
         self.declare_parameter("arm_group_name", "arm_group")
         self.declare_parameter("gripper_group_name", "grip_group")
-        self.declare_parameter("end_effector_link", "arm_link5")
+        self.declare_parameter("end_effector_link", "rlink3")
         self.declare_parameter("home_named", "up")
         self.declare_parameter("gripper_open_named", "open")
         self.declare_parameter("gripper_closed_named", "close")
@@ -615,39 +615,23 @@ class GeminiPickPlaceExecutor(Node):
         timeout = float(self.get_parameter("ik_timeout_sec").value)
         robot_model = self.moveit.get_robot_model()
 
-        # Treat the incoming pose's *position* as the desired FINGERTIP target.
-        # For each candidate orientation Q, compute the wrist IK target as
-        # `fingertip - R(Q) * tip_offset_local` so the fingertip lands at the
-        # perceived point regardless of the orientation chosen.
+        # The pose is the desired pose of `ee_link` (a fingertip link by default).
+        # MoveIt computes the wrist offset itself from the kinematic chain, so
+        # we just pass each candidate orientation at the perception point.
         fx = float(pose_stamped.pose.position.x)
         fy = float(pose_stamped.pose.position.y)
         fz = float(pose_stamped.pose.position.z)
-        tip_offset_param = list(self.get_parameter("gripper_tip_offset_xyz").value)
-        try:
-            tip_offset = [float(v) for v in tip_offset_param]
-            if len(tip_offset) != 3:
-                raise ValueError(f"expected 3 elements, got {len(tip_offset)}")
-        except Exception as exc:
-            self.get_logger().warn(
-                f"[{label}] invalid gripper_tip_offset_xyz ({exc}); using [0,0,0.09]"
-            )
-            tip_offset = [0.0, 0.0, 0.09]
-
         self.get_logger().info(
-            f"[{label}] fingertip target=({fx:.3f},{fy:.3f},{fz:.3f}) "
-            f"frame={pose_stamped.header.frame_id} tip_offset_local={tip_offset}"
+            f"[{label}] IK target ({ee_link})=({fx:.3f},{fy:.3f},{fz:.3f}) "
+            f"frame={pose_stamped.header.frame_id}"
         )
 
         candidates = self.candidate_orientations(fx, fy)
         for idx, (qx, qy, qz, qw) in enumerate(candidates):
-            ox, oy, oz = rotate_vector_by_quat(tip_offset, qx, qy, qz, qw)
-            wx = fx - ox
-            wy = fy - oy
-            wz = fz - oz
             attempt_pose = Pose()
-            attempt_pose.position.x = wx
-            attempt_pose.position.y = wy
-            attempt_pose.position.z = wz
+            attempt_pose.position.x = fx
+            attempt_pose.position.y = fy
+            attempt_pose.position.z = fz
             attempt_pose.orientation.x = qx
             attempt_pose.orientation.y = qy
             attempt_pose.orientation.z = qz

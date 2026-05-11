@@ -14,6 +14,7 @@ FORWARDED_PARAMS = [
     ("pick_lift_m", "0.02"),
     ("place_lift_m", "0.02"),
     ("gripper_tcp_offset_z", "0.02"),
+    ("end_effector_link", "rlink3"),
     ("position_tolerance_m", "0.01"),
     ("orientation_xy_tol_rad", "0.3"),
     ("orientation_z_tol_rad", "3.14"),
