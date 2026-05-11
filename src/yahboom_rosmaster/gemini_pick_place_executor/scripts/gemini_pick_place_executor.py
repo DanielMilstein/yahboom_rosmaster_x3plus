@@ -117,6 +117,9 @@ class GeminiPickPlaceExecutor(Node):
         self.declare_parameter("destination_point_source", "box_bias")
         self.declare_parameter("destination_box_y_fraction", 0.5)
         self.declare_parameter("destination_box_x_fraction", 0.5)
+        self.declare_parameter("destination_z_source", "target")
+        self.declare_parameter("destination_z_max", 0.25)
+        self.declare_parameter("destination_z_fixed", 0.20)
         self.declare_parameter("execute", False)
         self.declare_parameter("arm_group_name", "arm_group")
         self.declare_parameter("gripper_group_name", "grip_group")
@@ -264,6 +267,7 @@ class GeminiPickPlaceExecutor(Node):
         if perceived is None:
             return
         image, plan, target_point, destination_point = perceived
+        self.sanitize_destination_z(target_point, destination_point)
 
         initial_odom = None
         if execute and drive_enabled and self.target_outside_reach_window(target_point):
@@ -275,6 +279,7 @@ class GeminiPickPlaceExecutor(Node):
             if perceived is None:
                 return
             image, plan, target_point, destination_point = perceived
+            self.sanitize_destination_z(target_point, destination_point)
 
         self.publish_debug_markers(target_point, destination_point)
         self.log_candidate_summary(plan, target_point, destination_point)
@@ -339,6 +344,27 @@ class GeminiPickPlaceExecutor(Node):
             return None
 
         return image, plan, target_point, destination_point
+
+    def sanitize_destination_z(self, target_point, destination_point):
+        src = str(self.get_parameter("destination_z_source").value).lower()
+        z_max = float(self.get_parameter("destination_z_max").value)
+        original = float(destination_point.point.z)
+        if src == "target":
+            chosen = float(target_point.point.z)
+        elif src == "fixed":
+            chosen = float(self.get_parameter("destination_z_fixed").value)
+        else:
+            chosen = original
+        if chosen > z_max:
+            self.get_logger().warn(
+                f"destination z {chosen:.3f} clamped to {z_max:.3f}"
+            )
+            chosen = z_max
+        if abs(chosen - original) > 1e-4:
+            self.get_logger().info(
+                f"sanitize_destination_z: {original:.3f} -> {chosen:.3f} (source={src})"
+            )
+        destination_point.point.z = chosen
 
     def measure_grasp_width(self, plan, image):
         default_w = float(self.get_parameter("default_grasp_width_m").value)
