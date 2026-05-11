@@ -138,17 +138,19 @@ class GeminiPickPlaceExecutor(Node):
         self.declare_parameter("execute", False)
         self.declare_parameter("arm_group_name", "arm_group")
         self.declare_parameter("gripper_group_name", "grip_group")
-        self.declare_parameter("end_effector_link", "rlink3")
+        self.declare_parameter("end_effector_link", "arm_link5")
         self.declare_parameter("home_named", "up")
         self.declare_parameter("gripper_open_named", "open")
         self.declare_parameter("gripper_closed_named", "close")
         self.declare_parameter("gripper_tcp_offset_z", 0.02)
-        # Fingertip position in arm_link5's local frame. The fingertip is typically
-        # along arm_link5's +Z axis (the joint-5 roll axis = gripper approach
-        # direction). For each candidate orientation Q, the wrist IK target is
-        # computed as `fingertip_target - R(Q) * gripper_tip_offset_xyz`, so the
-        # fingertip lands on the perceived target regardless of orientation.
-        self.declare_parameter("gripper_tip_offset_xyz", [0.0, 0.0, 0.09])
+        # Fingertip position in arm_link5's local frame. For the Yahboom X3 Plus
+        # arm, grip_joint origin in arm_link5 frame is (-0.0035, -0.0126, -0.0685),
+        # so the gripper extends along arm_link5's -Z. Fingertip is roughly
+        # 12 cm along -Z (gripper + finger length). For each candidate orientation
+        # Q, the wrist IK target is computed as
+        # `fingertip_target - R(Q) * gripper_tip_offset_xyz`, so the fingertip
+        # lands on the perceived point regardless of orientation.
+        self.declare_parameter("gripper_tip_offset_xyz", [0.0, 0.0, -0.12])
         self.declare_parameter("use_orientation_constraint", True)
         self.declare_parameter("top_down_yaw", 0.0)
         self.declare_parameter("planning_time", 5.0)
@@ -615,23 +617,39 @@ class GeminiPickPlaceExecutor(Node):
         timeout = float(self.get_parameter("ik_timeout_sec").value)
         robot_model = self.moveit.get_robot_model()
 
-        # The pose is the desired pose of `ee_link` (a fingertip link by default).
-        # MoveIt computes the wrist offset itself from the kinematic chain, so
-        # we just pass each candidate orientation at the perception point.
+        # KDL only IKs to arm_link5 (Available tip frames: [arm_link5]). So we
+        # IK the wrist, but compute the wrist target per orientation so the
+        # fingertip lands on the perception point. Wrist target =
+        # fingertip - R(Q) * gripper_tip_offset_xyz.
         fx = float(pose_stamped.pose.position.x)
         fy = float(pose_stamped.pose.position.y)
         fz = float(pose_stamped.pose.position.z)
+        tip_offset_param = list(self.get_parameter("gripper_tip_offset_xyz").value)
+        try:
+            tip_offset = [float(v) for v in tip_offset_param]
+            if len(tip_offset) != 3:
+                raise ValueError(f"expected 3 elements, got {len(tip_offset)}")
+        except Exception as exc:
+            self.get_logger().warn(
+                f"[{label}] invalid gripper_tip_offset_xyz ({exc}); using [0,0,-0.12]"
+            )
+            tip_offset = [0.0, 0.0, -0.12]
+
         self.get_logger().info(
-            f"[{label}] IK target ({ee_link})=({fx:.3f},{fy:.3f},{fz:.3f}) "
-            f"frame={pose_stamped.header.frame_id}"
+            f"[{label}] fingertip target=({fx:.3f},{fy:.3f},{fz:.3f}) "
+            f"frame={pose_stamped.header.frame_id} tip_offset_local={tip_offset}"
         )
 
         candidates = self.candidate_orientations(fx, fy)
         for idx, (qx, qy, qz, qw) in enumerate(candidates):
+            ox, oy, oz = rotate_vector_by_quat(tip_offset, qx, qy, qz, qw)
+            wx = fx - ox
+            wy = fy - oy
+            wz = fz - oz
             attempt_pose = Pose()
-            attempt_pose.position.x = fx
-            attempt_pose.position.y = fy
-            attempt_pose.position.z = fz
+            attempt_pose.position.x = wx
+            attempt_pose.position.y = wy
+            attempt_pose.position.z = wz
             attempt_pose.orientation.x = qx
             attempt_pose.orientation.y = qy
             attempt_pose.orientation.z = qz
