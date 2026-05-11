@@ -722,6 +722,31 @@ class GeminiPickPlaceExecutor(Node):
         )
         return self.drive_relative_base(dx, dy)
 
+    def drive_to_reach_point(self, point, label):
+        """Drive base so `point` lands at (sweet_x, sweet_y) in base frame.
+
+        Mutates `point.point.x`/`point.point.y` in place after a successful drive
+        so callers see the post-drive coordinates. Other tracked PointStamped
+        objects in the same base frame need to be updated by the caller (via
+        offset_point_by_drive) if they're still needed downstream.
+        """
+        if not self.target_outside_reach_window(point):
+            self.get_logger().info(f"[{label}] already in reach; skipping drive")
+            return True
+        sweet_x = float(self.get_parameter("sweet_x").value)
+        sweet_y = float(self.get_parameter("sweet_y").value)
+        dx = float(point.point.x) - sweet_x
+        dy = float(point.point.y) - sweet_y
+        self.get_logger().info(
+            f"[{label}] drive to reach point=({point.point.x:.3f},{point.point.y:.3f}) "
+            f"sweet=({sweet_x:.3f},{sweet_y:.3f}) -> dx={dx:.3f} dy={dy:.3f}"
+        )
+        ok = self.drive_relative_base(dx, dy)
+        if ok:
+            point.point.x = sweet_x
+            point.point.y = sweet_y
+        return ok
+
     def drive_relative_base(self, dx_base, dy_base):
         mode = str(self.get_parameter("drive_mode").value).lower()
         odom0 = None
@@ -934,6 +959,8 @@ class GeminiPickPlaceExecutor(Node):
             ("06_lift",
              lambda: self.plan_and_execute_pose(
                  self.top_down_pose(target_point, pick_lift), "06_lift")),
+            ("06b_drive_to_destination",
+             lambda: self.drive_to_reach_point(destination_point, "06b_drive_to_destination")),
             ("07_pre_place",
              lambda: self.plan_and_execute_pose(
                  self.top_down_pose(destination_point, place_lift), "07_pre_place")),
