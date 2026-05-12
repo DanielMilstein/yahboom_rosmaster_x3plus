@@ -350,6 +350,32 @@ class GeminiPickPlaceExecutor(Node):
             else float(self.get_parameter("object_height_fallback_m").value)
         )
 
+        # The first drive_to_feasible chose its offset against the *pre-correction*
+        # target (raw perception, no z_top fixup). Re-perception shifted xy by a
+        # cm or two, and the height correction can raise z by 1-2 cm — enough to
+        # flip a barely-feasible IK into infeasible at the arm's reach boundary.
+        # Re-verify reachability and nudge the base again if needed.
+        if execute and drive_enabled:
+            pick_lift = float(self.get_parameter("pick_lift_m").value)
+            drive_result2 = self.drive_to_feasible(
+                target_point, pick_lift, "drive_to_reach_target_corrected"
+            )
+            if not drive_result2:
+                self.get_logger().error(
+                    "secondary base drive failed after target correction; aborting"
+                )
+                return
+            applied_dx2, applied_dy2 = drive_result2
+            if applied_dx2 != 0.0 or applied_dy2 != 0.0:
+                destination_point.point.x = float(destination_point.point.x) - applied_dx2
+                destination_point.point.y = float(destination_point.point.y) - applied_dy2
+                self.get_logger().info(
+                    f"destination dead-reckoned through correction drive: "
+                    f"({destination_point.point.x:.3f},"
+                    f"{destination_point.point.y:.3f},"
+                    f"{destination_point.point.z:.3f})"
+                )
+
         self.publish_debug_markers(target_point, destination_point)
         self.log_candidate_summary(plan, target_point, destination_point)
 
