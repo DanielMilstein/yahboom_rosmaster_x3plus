@@ -178,7 +178,9 @@ class GeminiPickPlaceExecutor(Node):
         self.declare_parameter("reach_window_x_max", 0.25)
         self.declare_parameter("reach_window_y_half", 0.05)
         self.declare_parameter("drive_axes", "y_only")
-        self.declare_parameter("base_search_dx_range_m", [-0.30, 0.30])
+        # Default forward bound is 0.0 to avoid driving into a forward obstacle
+        # (e.g., the table). Override via launch if the scene allows it.
+        self.declare_parameter("base_search_dx_range_m", [-0.30, 0.0])
         self.declare_parameter("base_search_dy_range_m", [-0.30, 0.30])
         self.declare_parameter("base_search_step_m", 0.03)
         self.declare_parameter("ik_search_timeout_sec", 0.3)

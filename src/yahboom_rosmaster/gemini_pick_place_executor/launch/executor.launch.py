@@ -23,7 +23,7 @@ FORWARDED_PARAMS = [
     ("ik_timeout_sec", "4.0"),
     ("enable_base_drive", "true"),
     ("drive_axes", "y_only"),
-    ("base_search_dx_range_m", "[-0.30, 0.30]"),
+    ("base_search_dx_range_m", "[-0.30, 0.05]"),
     ("base_search_dy_range_m", "[-0.30, 0.30]"),
     ("base_search_step_m", "0.03"),
     ("ik_search_timeout_sec", "0.3"),
