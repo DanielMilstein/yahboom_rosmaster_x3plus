@@ -65,6 +65,7 @@ def generate_launch_description():
                 "publish_geometry_updates": True,
                 "publish_state_updates": True,
                 "publish_transforms_updates": True,
+                "trajectory_execution.allowed_start_tolerance": 0.05,
             },
         ],
     )

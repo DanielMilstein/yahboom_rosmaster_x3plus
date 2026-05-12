@@ -13,6 +13,8 @@ FORWARDED_PARAMS = [
     ("task", "put the red can in the blue bin"),
     ("pick_lift_m", "0.06"),
     ("place_lift_m", "0.06"),
+    ("object_height_fallback_m", "0.10"),
+    ("grasp_z_fraction_from_top", "0.5"),
     ("carry_pose_named", "up"),
     ("gripper_tcp_offset_z", "0.02"),
     ("end_effector_link", "arm_link5"),

@@ -164,6 +164,12 @@ class GeminiPickPlaceExecutor(Node):
         self.declare_parameter("min_grasp_width_m", 0.005)
         self.declare_parameter("max_grasp_width_m", 0.060)
         self.declare_parameter("default_grasp_width_m", 0.045)
+        # Vertical extent of the grasped object. Measured from the bbox when possible
+        # (project top-edge-center and bottom-edge-center pixels to 3D); falls back
+        # to the parameter below. `grasp_z_fraction_from_top` chooses how far down
+        # the can the fingertip descends (0.0 = top, 0.5 = mid, 1.0 = bottom).
+        self.declare_parameter("object_height_fallback_m", 0.10)
+        self.declare_parameter("grasp_z_fraction_from_top", 0.5)
         self.declare_parameter("position_tolerance_m", 0.01)
         self.declare_parameter("orientation_xy_tol_rad", 0.1)
         self.declare_parameter("orientation_z_tol_rad", 3.14)
@@ -306,23 +312,52 @@ class GeminiPickPlaceExecutor(Node):
         if execute and drive_enabled:
             pick_lift = float(self.get_parameter("pick_lift_m").value)
             initial_odom = self.snapshot_odom()  # may be None in open-loop mode
-            if not self.drive_to_feasible(
+            drive_result = self.drive_to_feasible(
                 target_point, pick_lift, "drive_to_reach_target"
-            ):
+            )
+            if not drive_result:
                 self.get_logger().error("base drive failed; aborting")
                 return
+            applied_dx, applied_dy = drive_result
+            # Dead-reckon the destination through the same drive delta; re-projecting
+            # a 2D bbox from the new vantage gives noisy readings (the bin's centroid
+            # can land on the chassis rim), but the rigid base move is exact.
+            destination_point.point.x = float(destination_point.point.x) - applied_dx
+            destination_point.point.y = float(destination_point.point.y) - applied_dy
+            self.get_logger().info(
+                f"destination dead-reckoned through drive: "
+                f"({destination_point.point.x:.3f},"
+                f"{destination_point.point.y:.3f},"
+                f"{destination_point.point.z:.3f})"
+            )
             perceived = self.perceive_targets()
             if perceived is None:
                 return
-            image, plan, target_point, destination_point = perceived
+            # Use refreshed image/plan/target, but DISCARD the re-perceived destination.
+            image, plan, target_point, _re_destination = perceived
             self.sanitize_destination_z(target_point, destination_point)
+
+        # Promote target_point.z to the top of the object so pre-pick lift gives
+        # genuine clearance above it, and capture the object height for the pick
+        # descent. Without this, the perceived z lands somewhere on the can side
+        # and the gripper crashes down on top of it.
+        z_top, measured_height = self.measure_object_extent(plan, image)
+        if z_top is not None:
+            target_point.point.z = z_top
+        object_height = (
+            measured_height
+            if measured_height is not None and measured_height > 0.0
+            else float(self.get_parameter("object_height_fallback_m").value)
+        )
 
         self.publish_debug_markers(target_point, destination_point)
         self.log_candidate_summary(plan, target_point, destination_point)
 
         if execute:
             grasp_width = self.measure_grasp_width(plan, image)
-            success = self.execute_pick_place(target_point, destination_point, grasp_width)
+            success = self.execute_pick_place(
+                target_point, destination_point, grasp_width, object_height
+            )
             if success:
                 self.get_logger().info("Pick-and-place sequence completed")
             else:
@@ -432,6 +467,33 @@ class GeminiPickPlaceExecutor(Node):
         width = math.sqrt(dx * dx + dy * dy + dz * dz)
         self.get_logger().info(f"Measured object grasp width: {width:.3f} m")
         return width
+
+    def measure_object_extent(self, plan, image):
+        """Return (z_top, height) by projecting bbox top-center and bottom-center
+        pixels into 3D. Falls back to (None, None) if the bbox is missing or
+        projection fails — caller substitutes the fallback height.
+        """
+        box = plan.get("target_object", {}).get("box")
+        if not box or len(box) != 4:
+            return None, None
+        ymin, xmin, ymax, xmax = [float(v) for v in box]
+        x_mid = 0.5 * (xmin + xmax)
+        top_pixel = normalized_point_to_pixel([ymin, x_mid], image.width, image.height)
+        bottom_pixel = normalized_point_to_pixel(
+            [ymax, x_mid], image.width, image.height
+        )
+        top_pt = self.project_pixel("box_top", top_pixel, image.header.frame_id)
+        bottom_pt = self.project_pixel("box_bottom", bottom_pixel, image.header.frame_id)
+        if top_pt is None or bottom_pt is None:
+            return None, None
+        z_top = float(top_pt.point.z)
+        z_bottom = float(bottom_pt.point.z)
+        height = abs(z_top - z_bottom)
+        self.get_logger().info(
+            f"Measured object extent: z_top={z_top:.3f} z_bottom={z_bottom:.3f} "
+            f"height={height:.3f}m"
+        )
+        return z_top, height
 
     def destination_point_2d(self, plan):
         destination = plan["destination"]
@@ -936,21 +998,23 @@ class GeminiPickPlaceExecutor(Node):
             self.get_logger().error(
                 f"[{label}] no feasible base offset found in search range"
             )
-            return False
+            return None
         dx, dy, orient_idx = result
         self.get_logger().info(
             f"[{label}] feasible base offset dx={dx:.3f} dy={dy:.3f} "
             f"(orientation #{orient_idx}); driving"
         )
         if not self.drive_relative_base(dx, dy):
-            return False
+            return None
         # Reflect the base move in the point's coordinates (now in new base frame).
         axes_mode = str(self.get_parameter("drive_axes").value).lower()
-        if axes_mode in ("xy", "x_only"):
-            point.point.x = float(point.point.x) - dx
-        if axes_mode in ("xy", "y_only"):
-            point.point.y = float(point.point.y) - dy
-        return True
+        applied_dx = dx if axes_mode in ("xy", "x_only") else 0.0
+        applied_dy = dy if axes_mode in ("xy", "y_only") else 0.0
+        if applied_dx != 0.0:
+            point.point.x = float(point.point.x) - applied_dx
+        if applied_dy != 0.0:
+            point.point.y = float(point.point.y) - applied_dy
+        return applied_dx, applied_dy
 
     def drive_to_reach(self, target_point):
         sweet_x = float(self.get_parameter("sweet_x").value)
@@ -1194,12 +1258,22 @@ class GeminiPickPlaceExecutor(Node):
         )
         return joint_value
 
-    def execute_pick_place(self, target_point, destination_point, grasp_width_m):
+    def execute_pick_place(
+        self, target_point, destination_point, grasp_width_m, object_height_m
+    ):
         home = str(self.get_parameter("home_named").value)
         open_name = str(self.get_parameter("gripper_open_named").value)
         pick_lift = float(self.get_parameter("pick_lift_m").value)
         place_lift = float(self.get_parameter("place_lift_m").value)
+        grasp_fraction = float(self.get_parameter("grasp_z_fraction_from_top").value)
+        # target_point.z is the top of the object (set in run_once). Descend by
+        # height * fraction so fingertips wrap around the side, not the top.
+        grasp_descent = -float(object_height_m) * grasp_fraction
         grip_value = self.grasp_grip_joint(grasp_width_m)
+        self.get_logger().info(
+            f"grasp descent below object top: {grasp_descent:.3f}m "
+            f"(height={object_height_m:.3f}m, fraction={grasp_fraction:.2f})"
+        )
 
         steps = [
             ("01_home", lambda: self.plan_and_execute_named_arm(home, "01_home")),
@@ -1210,7 +1284,7 @@ class GeminiPickPlaceExecutor(Node):
                  self.top_down_pose(target_point, pick_lift), "03_pre_pick")),
             ("04_pick",
              lambda: self.plan_and_execute_pose(
-                 self.top_down_pose(target_point, 0.0), "04_pick")),
+                 self.top_down_pose(target_point, grasp_descent), "04_pick")),
             ("05_close_gripper",
              lambda: self.plan_and_execute_gripper_value(grip_value, "05_close_gripper")),
             ("06_lift",
