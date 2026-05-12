@@ -311,9 +311,18 @@ class GeminiPickPlaceExecutor(Node):
         initial_odom = None
         if execute and drive_enabled:
             pick_lift = float(self.get_parameter("pick_lift_m").value)
+            grasp_fraction = float(
+                self.get_parameter("grasp_z_fraction_from_top").value
+            )
+            fallback_height = float(
+                self.get_parameter("object_height_fallback_m").value
+            )
+            # Test both pre-pick (lifted) and the worst-case pick depth so the
+            # search doesn't pick an offset that only works at the easy height.
+            initial_pick_lifts = [pick_lift, -fallback_height * grasp_fraction]
             initial_odom = self.snapshot_odom()  # may be None in open-loop mode
             drive_result = self.drive_to_feasible(
-                target_point, pick_lift, "drive_to_reach_target"
+                target_point, initial_pick_lifts, "drive_to_reach_target"
             )
             if not drive_result:
                 self.get_logger().error("base drive failed; aborting")
@@ -357,8 +366,16 @@ class GeminiPickPlaceExecutor(Node):
         # Re-verify reachability and nudge the base again if needed.
         if execute and drive_enabled:
             pick_lift = float(self.get_parameter("pick_lift_m").value)
+            grasp_fraction = float(
+                self.get_parameter("grasp_z_fraction_from_top").value
+            )
+            # Use the *measured* object height for the actual pick depth now
+            # that it's known, so the search reflects the real planning target.
+            corrected_pick_lifts = [pick_lift, -object_height * grasp_fraction]
             drive_result2 = self.drive_to_feasible(
-                target_point, pick_lift, "drive_to_reach_target_corrected"
+                target_point,
+                corrected_pick_lifts,
+                "drive_to_reach_target_corrected",
             )
             if not drive_result2:
                 self.get_logger().error(
@@ -706,6 +723,32 @@ class GeminiPickPlaceExecutor(Node):
                 results.append((qx / n, qy / n, qz / n, qw / n))
         return results
 
+    def state_is_collision_free(self, state):
+        """Check `state` against the current planning scene. Returns False if
+        the IK plugin (KDL) returned a kinematically-valid but self-colliding
+        configuration, which OMPL would later reject as an invalid goal state.
+        """
+        if self.moveit is None:
+            return True
+        try:
+            psm = self.moveit.get_planning_scene_monitor()
+            arm_name = str(self.get_parameter("arm_group_name").value)
+            with psm.read_only() as scene:
+                colliding = scene.is_state_colliding(
+                    robot_state=state,
+                    joint_model_group_name=arm_name,
+                    verbose=False,
+                )
+            return not colliding
+        except Exception as exc:
+            # If the planning scene API isn't available for some reason, fail
+            # open: trust the IK and let OMPL reject if needed.
+            self.get_logger().warn(
+                f"state_is_collision_free: could not query planning scene ({exc}); "
+                "assuming collision-free"
+            )
+            return True
+
     def plan_and_execute_pose(self, pose_stamped, label):
         if self.arm_component is None or self.moveit is None:
             self.get_logger().error(f"[{label}] MoveItPy not initialized")
@@ -759,15 +802,21 @@ class GeminiPickPlaceExecutor(Node):
             state = RobotState(robot_model)
             state.update()
             ok = state.set_from_ik(arm_name, attempt_pose, ee_link, timeout)
-            if ok:
-                self.get_logger().info(
-                    f"[{label}] IK ok with orientation #{idx} "
-                    f"quat=({qx:.3f},{qy:.3f},{qz:.3f},{qw:.3f})"
+            if not ok:
+                self.get_logger().warn(f"[{label}] IK candidate #{idx} failed")
+                continue
+            if not self.state_is_collision_free(state):
+                self.get_logger().warn(
+                    f"[{label}] IK candidate #{idx} self-collides; skipping"
                 )
-                self.arm_component.set_start_state_to_current_state()
-                self.arm_component.set_goal_state(robot_state=state)
-                return self.plan_and_execute(self.arm_component, arm_name, label)
-            self.get_logger().warn(f"[{label}] IK candidate #{idx} failed")
+                continue
+            self.get_logger().info(
+                f"[{label}] IK ok with orientation #{idx} "
+                f"quat=({qx:.3f},{qy:.3f},{qz:.3f},{qw:.3f})"
+            )
+            self.arm_component.set_start_state_to_current_state()
+            self.arm_component.set_goal_state(robot_state=state)
+            return self.plan_and_execute(self.arm_component, arm_name, label)
 
         self.get_logger().warn(
             f"[{label}] all {len(candidates)} candidate orientations failed; "
@@ -917,13 +966,24 @@ class GeminiPickPlaceExecutor(Node):
         msg.header.frame_id = "base_link"
         self.cmd_vel_pub.publish(msg)
 
-    def find_feasible_drive_for_point(self, point, lift_z):
-        """Search candidate base displacements (dx, dy) for one where arm IK
-        is feasible for the fingertip target at (point.x, point.y, point.z + lift_z).
+    def find_feasible_drive_for_point(self, point, lift_zs):
+        """Search candidate base displacements (dx, dy) for one where arm IK is
+        feasible AND collision-free at every fingertip target
+        (point.x, point.y, point.z + lift) for each lift in `lift_zs`.
+
+        Accepts a scalar or iterable for backwards compatibility. The same
+        orientation index must work at *all* requested lifts, so a single
+        approach path can be planned through them.
 
         Returns (dx, dy, orientation_idx) of the smallest-norm displacement
         that succeeds, or None if no candidate in the search range works.
         """
+        try:
+            lifts = [float(v) for v in lift_zs]
+        except TypeError:
+            lifts = [float(lift_zs)]
+        if not lifts:
+            lifts = [0.0]
         if self.arm_component is None or self.moveit is None:
             return None
         from moveit.core.robot_state import RobotState
@@ -984,7 +1044,7 @@ class GeminiPickPlaceExecutor(Node):
         # Pre-compute orientation list once per (dx, dy) since it depends on (fx_hypo, fy_hypo).
         fx_world = float(point.point.x)
         fy_world = float(point.point.y)
-        fz = float(point.point.z) + float(lift_z)
+        z_world = float(point.point.z)
 
         for cand_idx, (dx, dy) in enumerate(candidates):
             fx = fx_world - dx
@@ -992,33 +1052,49 @@ class GeminiPickPlaceExecutor(Node):
             orientations = self.candidate_orientations(fx, fy)
             for orient_idx, (qx, qy, qz, qw) in enumerate(orientations):
                 ox, oy, oz = rotate_vector_by_quat(tip_offset, qx, qy, qz, qw)
-                wx = fx - ox
-                wy = fy - oy
-                wz = fz - oz
-                attempt_pose = Pose()
-                attempt_pose.position.x = wx
-                attempt_pose.position.y = wy
-                attempt_pose.position.z = wz
-                attempt_pose.orientation.x = qx
-                attempt_pose.orientation.y = qy
-                attempt_pose.orientation.z = qz
-                attempt_pose.orientation.w = qw
+                # Require this orientation to be valid at every requested lift.
+                all_lifts_ok = True
+                for lift in lifts:
+                    fz = z_world + lift
+                    wx = fx - ox
+                    wy = fy - oy
+                    wz = fz - oz
+                    attempt_pose = Pose()
+                    attempt_pose.position.x = wx
+                    attempt_pose.position.y = wy
+                    attempt_pose.position.z = wz
+                    attempt_pose.orientation.x = qx
+                    attempt_pose.orientation.y = qy
+                    attempt_pose.orientation.z = qz
+                    attempt_pose.orientation.w = qw
 
-                state = RobotState(robot_model)
-                state.update()
-                if state.set_from_ik(arm_name, attempt_pose, ee_link, timeout):
+                    state = RobotState(robot_model)
+                    state.update()
+                    if not state.set_from_ik(
+                        arm_name, attempt_pose, ee_link, timeout
+                    ):
+                        all_lifts_ok = False
+                        break
+                    if not self.state_is_collision_free(state):
+                        all_lifts_ok = False
+                        break
+                if all_lifts_ok:
                     self.get_logger().info(
                         f"find_feasible_drive: feasible at dx={dx:.3f} dy={dy:.3f} "
-                        f"orient #{orient_idx} after {cand_idx + 1} candidates"
+                        f"orient #{orient_idx} after {cand_idx + 1} candidates "
+                        f"(lifts={[round(l, 3) for l in lifts]})"
                     )
                     return dx, dy, orient_idx
         self.get_logger().warn(
             f"find_feasible_drive: no feasible offset in {len(candidates)} candidates "
-            f"(point=({fx_world:.3f},{fy_world:.3f},{point.point.z:.3f}), lift={lift_z:.3f})"
+            f"(point=({fx_world:.3f},{fy_world:.3f},{z_world:.3f}), "
+            f"lifts={[round(l, 3) for l in lifts]})"
         )
         return None
 
     def drive_to_feasible(self, point, lift_z, label):
+        # Accept a scalar or an iterable of lifts; the search requires all
+        # requested lifts to be feasible & collision-free at the same orientation.
         result = self.find_feasible_drive_for_point(point, lift_z)
         if result is None:
             self.get_logger().error(
@@ -1322,7 +1398,9 @@ class GeminiPickPlaceExecutor(Node):
                  "06a_tuck_for_drive")),
             ("06b_drive_to_destination",
              lambda: self.drive_to_feasible(
-                 destination_point, place_lift, "06b_drive_to_destination"
+                 destination_point,
+                 [place_lift, 0.0],
+                 "06b_drive_to_destination",
              )),
             ("07_pre_place",
              lambda: self.plan_and_execute_pose(
