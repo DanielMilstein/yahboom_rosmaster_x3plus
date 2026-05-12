@@ -49,8 +49,13 @@ def make_color(red, green, blue, alpha=1.0):
 
 
 def top_down_quaternion(yaw=0.0):
+    """Identity orientation, yawed by `yaw` around world Z. At all-joints-zero
+    on this arm, arm_link5's frame is identity-aligned with world (R_x(-π/2)
+    at joint2 cancels R_x(+π/2) at joint5; arm_link2/3/4 are pitched out and
+    joint5 unrolls). The gripper hangs along arm_link5's -Z = world -Z, so
+    identity orientation IS top-down. Returns (qx, qy, qz, qw)."""
     half = 0.5 * float(yaw)
-    return (math.cos(half), math.sin(half), 0.0, 0.0)
+    return (0.0, 0.0, math.sin(half), math.cos(half))
 
 
 def rotate_vector_by_quat(v, qx, qy, qz, qw):
@@ -685,39 +690,31 @@ class GeminiPickPlaceExecutor(Node):
         return True
 
     def candidate_orientations(self, target_x, target_y):
-        """Generate fallback orientations from top-down to tilted, all yawed to face target."""
+        """Top-down + tilted approach orientations, all yawed to face target.
+        Baseline (candidate 0) is identity-with-yaw — at all-joints-zero on
+        this arm, arm_link5 IS identity-aligned with world, so identity is the
+        true gripper-points-down pose. Tilts use RPY=(0, -delta, yaw): pitch by
+        -delta around Y tilts the gripper's -Z direction from straight-down
+        toward +X, then yaw rotates that tilt toward (target_x, target_y).
+        """
         yaw = math.atan2(target_y, target_x)
         cy = math.cos(yaw / 2.0)
         sy = math.sin(yaw / 2.0)
 
         results = []
-        # Original: top-down RPY=(pi, 0, 0) yawed by atan2(y,x)
-        # quat = (cos(yaw/2), sin(yaw/2), 0, 0) for fixed RPY=(pi,0,yaw) — same as top_down_quaternion(yaw).
-        results.append((cy, sy, 0.0, 0.0))
+        # Candidate 0: identity-with-yaw (true top-down).
+        results.append((0.0, 0.0, sy, cy))
 
-        # Tilted candidates: gripper Z tilted "below horizontal" by various angles, yawed to face target.
-        # Construction: q_yaw_around_Z * q_roll_pi_around_X_in_yawed_frame * q_pitch_around_Y
-        # We approximate with a sequential body rotation from RPY(pi, -delta, yaw)
-        # where delta in (0, pi/2) moves from top-down toward forward-pointing.
-        for delta_rad in (0.4, 0.8, 1.2, 1.4):  # ~23, 46, 69, 80 deg from top-down
+        # Tilted candidates: RPY=(0, -delta, yaw) extrinsic XYZ = Rz(yaw)*Ry(-delta).
+        # For RPY=(0, P, Y): qw = cos(Y/2)cos(P/2), qx = -sin(Y/2)sin(P/2),
+        # qy = cos(Y/2)sin(P/2), qz = sin(Y/2)cos(P/2). With P=-delta:
+        for delta_rad in (0.4, 0.8, 1.2, 1.4):  # ~23, 46, 69, 80 deg from straight down
             cd = math.cos(delta_rad / 2.0)
             sd = math.sin(delta_rad / 2.0)
-            # q_top_down = (cy, sy, 0, 0) (after applying roll=pi yaw=yaw)
-            # q_pitch around body Y by -delta = (cos(-d/2), 0, sin(-d/2), 0) = (cd, 0, -sd, 0) but
-            # acting in the yawed/rolled frame -> need composition.
-            # Easier: build directly from RPY=(pi, -delta, yaw) in fixed XYZ convention.
-            # qw = cos(R/2)cos(P/2)cos(Y/2) + sin(R/2)sin(P/2)sin(Y/2)
-            # With R=pi: cos(R/2)=0, sin(R/2)=1
-            # qw = sin(P/2)sin(Y/2) = (-sd)*sy = -sd*sy
-            # qx = sin(R/2)cos(P/2)cos(Y/2) - cos(R/2)sin(P/2)sin(Y/2) = cd*cy
-            # qy = cos(R/2)sin(P/2)cos(Y/2) + sin(R/2)cos(P/2)sin(Y/2) = cd*sy
-            # qz = cos(R/2)cos(P/2)sin(Y/2) - sin(R/2)sin(P/2)cos(Y/2) = -(-sd)*cy = sd*cy
-            # but P = -delta means sin(P/2) = -sd, cos(P/2) = cd
-            qw = -sd * sy
-            qx = cd * cy
-            qy = cd * sy
-            qz = sd * cy
-            # Normalize
+            qw = cy * cd
+            qx = sy * sd
+            qy = -cy * sd
+            qz = sy * cd
             n = math.sqrt(qw * qw + qx * qx + qy * qy + qz * qz)
             if n > 1e-9:
                 results.append((qx / n, qy / n, qz / n, qw / n))
