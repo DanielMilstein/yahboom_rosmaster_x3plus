@@ -49,13 +49,13 @@ def make_color(red, green, blue, alpha=1.0):
 
 
 def top_down_quaternion(yaw=0.0):
-    """Identity orientation, yawed by `yaw` around world Z. At all-joints-zero
-    on this arm, arm_link5's frame is identity-aligned with world (R_x(-π/2)
-    at joint2 cancels R_x(+π/2) at joint5; arm_link2/3/4 are pitched out and
-    joint5 unrolls). The gripper hangs along arm_link5's -Z = world -Z, so
-    identity orientation IS top-down. Returns (qx, qy, qz, qw)."""
+    """`R_x(π)` + yaw via the axis-tilt parameterization. Empirically this is
+    what makes the gripper physically point DOWN at the can on this URDF — the
+    arm_link5 FK at joints-zero looks identity, but the gripper assembly
+    downstream of `grip_joint` (rpy=(0,-π/2,0) + the rlink/llink chain)
+    effectively flips the gripper's "down" axis. Returns (qx, qy, qz, qw)."""
     half = 0.5 * float(yaw)
-    return (0.0, 0.0, math.sin(half), math.cos(half))
+    return (math.cos(half), math.sin(half), 0.0, 0.0)
 
 
 def rotate_vector_by_quat(v, qx, qy, qz, qw):
@@ -159,7 +159,7 @@ class GeminiPickPlaceExecutor(Node):
         # Q, the wrist IK target is computed as
         # `fingertip_target - R(Q) * gripper_tip_offset_xyz`, so the fingertip
         # lands on the perceived point regardless of orientation.
-        self.declare_parameter("gripper_tip_offset_xyz", [0.0, 0.0, -0.12])
+        self.declare_parameter("gripper_tip_offset_xyz", [0.0, 0.0, -0.09])
         self.declare_parameter("use_orientation_constraint", True)
         self.declare_parameter("top_down_yaw", 0.0)
         self.declare_parameter("planning_time", 5.0)
@@ -716,31 +716,35 @@ class GeminiPickPlaceExecutor(Node):
         return True
 
     def candidate_orientations(self, target_x, target_y):
-        """Top-down + tilted approach orientations, all yawed to face target.
-        Baseline (candidate 0) is identity-with-yaw — at all-joints-zero on
-        this arm, arm_link5 IS identity-aligned with world, so identity is the
-        true gripper-points-down pose. Tilts use RPY=(0, -delta, yaw): pitch by
-        -delta around Y tilts the gripper's -Z direction from straight-down
-        toward +X, then yaw rotates that tilt toward (target_x, target_y).
+        """Generate fallback orientations from top-down to tilted, all yawed to face target.
+        Baseline (candidate 0) is RPY=(π, 0, yaw) — the empirically-correct
+        gripper-points-down on this URDF. Tilts are RPY=(π, -delta, yaw).
         """
         yaw = math.atan2(target_y, target_x)
         cy = math.cos(yaw / 2.0)
         sy = math.sin(yaw / 2.0)
 
         results = []
-        # Candidate 0: identity-with-yaw (true top-down).
-        results.append((0.0, 0.0, sy, cy))
+        # Original: top-down RPY=(pi, 0, 0) yawed by atan2(y,x)
+        # quat = (cos(yaw/2), sin(yaw/2), 0, 0) for fixed RPY=(pi,0,yaw) — same as top_down_quaternion(yaw).
+        results.append((cy, sy, 0.0, 0.0))
 
-        # Tilted candidates: RPY=(0, -delta, yaw) extrinsic XYZ = Rz(yaw)*Ry(-delta).
-        # For RPY=(0, P, Y): qw = cos(Y/2)cos(P/2), qx = -sin(Y/2)sin(P/2),
-        # qy = cos(Y/2)sin(P/2), qz = sin(Y/2)cos(P/2). With P=-delta:
-        for delta_rad in (0.4, 0.8, 1.2, 1.4):  # ~23, 46, 69, 80 deg from straight down
+        # Tilted candidates: gripper Z tilted "below horizontal" by various angles, yawed to face target.
+        # Build directly from RPY=(pi, -delta, yaw) in fixed XYZ convention.
+        # qw = cos(R/2)cos(P/2)cos(Y/2) + sin(R/2)sin(P/2)sin(Y/2)
+        # With R=pi: cos(R/2)=0, sin(R/2)=1
+        # qw = sin(P/2)sin(Y/2) = (-sd)*sy = -sd*sy
+        # qx = sin(R/2)cos(P/2)cos(Y/2) - cos(R/2)sin(P/2)sin(Y/2) = cd*cy
+        # qy = cos(R/2)sin(P/2)cos(Y/2) + sin(R/2)cos(P/2)sin(Y/2) = cd*sy
+        # qz = cos(R/2)cos(P/2)sin(Y/2) - sin(R/2)sin(P/2)cos(Y/2) = -(-sd)*cy = sd*cy
+        # (with P = -delta, so sin(P/2) = -sd, cos(P/2) = cd)
+        for delta_rad in (0.4, 0.8, 1.2, 1.4):  # ~23, 46, 69, 80 deg from top-down
             cd = math.cos(delta_rad / 2.0)
             sd = math.sin(delta_rad / 2.0)
-            qw = cy * cd
-            qx = sy * sd
-            qy = -cy * sd
-            qz = sy * cd
+            qw = -sd * sy
+            qx = cd * cy
+            qy = cd * sy
+            qz = sd * cy
             n = math.sqrt(qw * qw + qx * qx + qy * qy + qz * qz)
             if n > 1e-9:
                 results.append((qx / n, qy / n, qz / n, qw / n))

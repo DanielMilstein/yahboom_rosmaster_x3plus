@@ -17,6 +17,7 @@ FORWARDED_PARAMS = [
     ("grasp_z_fraction_from_top", "0.5"),
     ("carry_pose_named", "up"),
     ("gripper_tcp_offset_z", "0.09"),
+    ("gripper_tip_offset_xyz", "[0.0, 0.0, -0.09]"),
     ("end_effector_link", "arm_link5"),
     ("position_tolerance_m", "0.01"),
     ("orientation_xy_tol_rad", "0.3"),
