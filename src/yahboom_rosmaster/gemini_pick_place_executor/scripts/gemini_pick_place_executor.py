@@ -517,18 +517,33 @@ class GeminiPickPlaceExecutor(Node):
         return width
 
     def measure_object_extent(self, plan, image):
-        """Return (z_top, height) by projecting bbox top-center and bottom-center
-        pixels into 3D. Falls back to (None, None) if the bbox is missing or
-        projection fails — caller substitutes the fallback height.
+        """Return (z_top, height) by projecting two pixels along the bbox
+        vertical centerline. Inset 8% inside the bbox so the rays land on the
+        object rather than the background — the bbox is often slightly loose,
+        and projecting from the very edge can hit the table far behind/below
+        the can, giving wildly wrong depths.
+
+        Returns (None, None) if the bbox is missing, projection fails, or the
+        result fails sanity (z_top should be above z_bottom by at least 2 cm,
+        height in [0.02, 0.30] m, and the two projections close in xy — a can
+        is roughly vertical, so they should land at similar x, y).
         """
         box = plan.get("target_object", {}).get("box")
         if not box or len(box) != 4:
             return None, None
         ymin, xmin, ymax, xmax = [float(v) for v in box]
+        yspan = ymax - ymin
+        if yspan <= 0:
+            return None, None
+        inset = 0.08 * yspan
+        top_y = ymin + inset
+        bottom_y = ymax - inset
         x_mid = 0.5 * (xmin + xmax)
-        top_pixel = normalized_point_to_pixel([ymin, x_mid], image.width, image.height)
+        top_pixel = normalized_point_to_pixel(
+            [top_y, x_mid], image.width, image.height
+        )
         bottom_pixel = normalized_point_to_pixel(
-            [ymax, x_mid], image.width, image.height
+            [bottom_y, x_mid], image.width, image.height
         )
         top_pt = self.project_pixel("box_top", top_pixel, image.header.frame_id)
         bottom_pt = self.project_pixel("box_bottom", bottom_pixel, image.header.frame_id)
@@ -536,7 +551,18 @@ class GeminiPickPlaceExecutor(Node):
             return None, None
         z_top = float(top_pt.point.z)
         z_bottom = float(bottom_pt.point.z)
-        height = abs(z_top - z_bottom)
+        height = z_top - z_bottom
+        xy_spread = math.hypot(
+            float(top_pt.point.x) - float(bottom_pt.point.x),
+            float(top_pt.point.y) - float(bottom_pt.point.y),
+        )
+        if height < 0.02 or height > 0.30 or xy_spread > 0.08:
+            self.get_logger().warn(
+                f"measure_object_extent rejected: z_top={z_top:.3f} "
+                f"z_bottom={z_bottom:.3f} height={height:.3f}m "
+                f"xy_spread={xy_spread:.3f}m; falling back"
+            )
+            return None, None
         self.get_logger().info(
             f"Measured object extent: z_top={z_top:.3f} z_bottom={z_bottom:.3f} "
             f"height={height:.3f}m"
