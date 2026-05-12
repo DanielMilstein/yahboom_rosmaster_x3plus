@@ -40,7 +40,7 @@ FORWARDED_PARAMS = [
     ("reach_window_y_half", "0.05"),
     ("drive_max_lin_speed_mps", "0.10"),
     ("drive_position_tol_m", "0.01"),
-    ("drive_timeout_sec", "30.0"),
+    ("drive_timeout_sec", "10.0"),
     ("return_after_place", "true"),
     ("drive_mode", "auto"),
     ("stow_for_perception", "true"),
