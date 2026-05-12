@@ -127,8 +127,12 @@ class GeminiPickPlaceExecutor(Node):
         self.declare_parameter("auto_start", True)
         self.declare_parameter("project_timeout_sec", 3.0)
         self.declare_parameter("service_timeout_sec", 10.0)
-        self.declare_parameter("pick_lift_m", 0.02)
-        self.declare_parameter("place_lift_m", 0.02)
+        self.declare_parameter("pick_lift_m", 0.06)
+        self.declare_parameter("place_lift_m", 0.06)
+        # Named SRDF pose to retreat to before driving with payload. Default "up"
+        # is the all-zeros pose (arm straight up) which keeps the gripper safely
+        # above any nearby obstacle while the chassis translates.
+        self.declare_parameter("carry_pose_named", "up")
         self.declare_parameter("destination_point_source", "box_bias")
         self.declare_parameter("destination_box_y_fraction", 0.5)
         self.declare_parameter("destination_box_x_fraction", 0.5)
@@ -1210,6 +1214,10 @@ class GeminiPickPlaceExecutor(Node):
             ("06_lift",
              lambda: self.plan_and_execute_pose(
                  self.top_down_pose(target_point, pick_lift), "06_lift")),
+            ("06a_tuck_for_drive",
+             lambda: self.plan_and_execute_named_arm(
+                 str(self.get_parameter("carry_pose_named").value),
+                 "06a_tuck_for_drive")),
             ("06b_drive_to_destination",
              lambda: self.drive_to_feasible(
                  destination_point, place_lift, "06b_drive_to_destination"
