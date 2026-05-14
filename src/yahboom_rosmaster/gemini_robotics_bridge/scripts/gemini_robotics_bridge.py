@@ -14,7 +14,7 @@ from ament_index_python.packages import get_package_share_directory
 
 import rclpy
 from rclpy.node import Node
-from yahboom_rosmaster_msgs.srv import GeminiPickPlace
+from yahboom_rosmaster_msgs.srv import GeminiPickPlace, GeminiVerifyPick
 
 
 SCHEMA_VERSION = "pick_place_v1"
@@ -478,13 +478,19 @@ class GeminiRoboticsBridge(Node):
         )
         self.system_prompt = read_prompt("gemini_pick_place_system.txt")
         self.retry_prompt = read_prompt("gemini_pick_place_retry.txt")
+        self.verify_prompt = read_prompt("gemini_verify_pick.txt")
         self.log_dir = Path(str(self.get_parameter("log_dir").value)).expanduser()
         self.log_dir.mkdir(parents=True, exist_ok=True)
 
         self.service = self.create_service(
             GeminiPickPlace, "gemini_pick_place", self.handle_pick_place
         )
-        self.get_logger().info("Gemini Robotics bridge ready on /gemini_pick_place")
+        self.verify_service = self.create_service(
+            GeminiVerifyPick, "gemini_verify_pick", self.handle_verify_pick
+        )
+        self.get_logger().info(
+            "Gemini Robotics bridge ready on /gemini_pick_place and /gemini_verify_pick"
+        )
 
     def _is_quota_or_auth_error(self, exc):
         msg = str(exc).lower()
@@ -583,6 +589,68 @@ class GeminiRoboticsBridge(Node):
         response.result_json = result_json
         response.error_message = error_message
         response.log_path = str(request_dir)
+        return response
+
+    def handle_verify_pick(self, request, response):
+        request_stamp = utc_stamp()
+        request_dir = self.log_dir / f"verify_{request_stamp}"
+        request_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            image_bytes, image_hash, image_path = self.encode_image(
+                request.image, request_dir
+            )
+            prompt = (
+                f"{self.verify_prompt}\n\n"
+                f"Target object: {request.target_label}\n"
+            )
+            raw_text = self.call_model(prompt, image_bytes)
+            parsed = None
+            error_message = ""
+            try:
+                parsed = json.loads(raw_text)
+            except json.JSONDecodeError as exc:
+                error_message = f"invalid JSON from Gemini: {exc}"
+            self.write_json(
+                request_dir / "request_response.json",
+                {
+                    "timestamp_utc": request_stamp,
+                    "target_label": request.target_label,
+                    "image_hash_sha256": image_hash,
+                    "image_path": str(image_path),
+                    "verify_prompt": self.verify_prompt,
+                    "raw_response": raw_text,
+                    "parsed_json": parsed,
+                    "error_message": error_message,
+                },
+            )
+        except Exception as exc:
+            response.success = False
+            response.picked_up = False
+            response.confidence = 0.0
+            response.reason = ""
+            response.log_path = str(request_dir)
+            response.error_message = str(exc)
+            self.get_logger().error(f"verify_pick failed: {exc}")
+            return response
+
+        if parsed is None:
+            response.success = False
+            response.picked_up = False
+            response.confidence = 0.0
+            response.reason = ""
+            response.log_path = str(request_dir)
+            response.error_message = error_message
+            return response
+
+        response.success = True
+        response.picked_up = bool(parsed.get("picked_up", False))
+        try:
+            response.confidence = float(parsed.get("confidence", 0.0))
+        except (TypeError, ValueError):
+            response.confidence = 0.0
+        response.reason = str(parsed.get("reason", ""))
+        response.log_path = str(request_dir)
+        response.error_message = ""
         return response
 
     def encode_image(self, image_msg, request_dir):

@@ -13,6 +13,7 @@ find_package(sensor_msgs REQUIRED)
 rosidl_generate_interfaces(${PROJECT_NAME}
   "action/TimedRotation.action"
   "srv/GeminiPickPlace.srv"
+  "srv/GeminiVerifyPick.srv"
   "srv/SetCleaningState.srv"
   DEPENDENCIES sensor_msgs
 )

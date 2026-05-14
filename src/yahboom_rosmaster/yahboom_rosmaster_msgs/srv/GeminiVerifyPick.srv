@@ -1,0 +1,9 @@
+string target_label
+sensor_msgs/Image image
+---
+bool success
+bool picked_up
+float32 confidence
+string reason
+string log_path
+string error_message

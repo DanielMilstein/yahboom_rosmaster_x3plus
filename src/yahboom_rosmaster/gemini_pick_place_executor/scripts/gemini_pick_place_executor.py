@@ -17,7 +17,7 @@ from visualization_msgs.msg import Marker, MarkerArray
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
-from yahboom_rosmaster_msgs.srv import GeminiPickPlace
+from yahboom_rosmaster_msgs.srv import GeminiPickPlace, GeminiVerifyPick
 
 
 def normalized_point_to_pixel(point, width, height):
@@ -175,6 +175,18 @@ class GeminiPickPlaceExecutor(Node):
         # the can the fingertip descends (0.0 = top, 0.5 = mid, 1.0 = bottom).
         self.declare_parameter("object_height_fallback_m", 0.10)
         self.declare_parameter("grasp_z_fraction_from_top", 0.5)
+        # Table-height safety floor. The pick fingertip is clamped so it never
+        # descends below `table_z + pick_z_safety_m`. With table_z_source set
+        # to "perception", we use the z_bottom from measure_object_extent
+        # (projection of the bbox-bottom-center pixel — typically the table
+        # level at the can's base). With "param", we use table_z_m directly.
+        self.declare_parameter("table_z_source", "perception")
+        self.declare_parameter("table_z_m", 0.14)
+        self.declare_parameter("pick_z_safety_m", 0.04)
+        # Gemini grasp verification after the pick + lift.
+        self.declare_parameter("verify_pick_with_gemini", True)
+        self.declare_parameter("verify_pick_required", True)
+        self.declare_parameter("verify_pick_service", "/gemini_verify_pick")
         self.declare_parameter("position_tolerance_m", 0.01)
         self.declare_parameter("orientation_xy_tol_rad", 0.1)
         self.declare_parameter("orientation_z_tol_rad", 3.14)
@@ -238,6 +250,9 @@ class GeminiPickPlaceExecutor(Node):
         self.marker_pub = self.create_publisher(MarkerArray, marker_topic, marker_qos)
         self.gemini_client = self.create_client(
             GeminiPickPlace, self.get_parameter("gemini_service").value
+        )
+        self.verify_client = self.create_client(
+            GeminiVerifyPick, self.get_parameter("verify_pick_service").value
         )
         self.cmd_vel_pub = self.create_publisher(TwistStamped, cmd_vel_topic, 10)
         self.odom_sub = self.create_subscription(Odometry, odom_topic, self.odom_callback, 10)
@@ -355,7 +370,9 @@ class GeminiPickPlaceExecutor(Node):
         # genuine clearance above it, and capture the object height for the pick
         # descent. Without this, the perceived z lands somewhere on the can side
         # and the gripper crashes down on top of it.
-        z_top, measured_height = self.measure_object_extent(plan, image)
+        z_top, measured_height, measured_z_bottom = self.measure_object_extent(
+            plan, image
+        )
         if z_top is not None:
             target_point.point.z = z_top
         object_height = (
@@ -363,6 +380,17 @@ class GeminiPickPlaceExecutor(Node):
             if measured_height is not None and measured_height > 0.0
             else float(self.get_parameter("object_height_fallback_m").value)
         )
+        # Determine the table_z used as the pick-fingertip safety floor.
+        table_z_source = str(self.get_parameter("table_z_source").value).lower()
+        if table_z_source == "perception" and measured_z_bottom is not None:
+            table_z = float(measured_z_bottom)
+        else:
+            table_z = float(self.get_parameter("table_z_m").value)
+            if table_z_source == "perception":
+                self.get_logger().info(
+                    f"table_z source=perception unavailable; falling back to "
+                    f"param table_z_m={table_z:.3f}"
+                )
 
         # The first drive_to_feasible chose its offset against the *pre-correction*
         # target (raw perception, no z_top fixup). Re-perception shifted xy by a
@@ -403,8 +431,16 @@ class GeminiPickPlaceExecutor(Node):
 
         if execute:
             grasp_width = self.measure_grasp_width(plan, image)
+            target_label = str(
+                plan.get("target_object", {}).get("label", "object")
+            )
             success = self.execute_pick_place(
-                target_point, destination_point, grasp_width, object_height
+                target_point,
+                destination_point,
+                grasp_width,
+                object_height,
+                table_z,
+                target_label,
             )
             if success:
                 self.get_logger().info("Pick-and-place sequence completed")
@@ -517,8 +553,10 @@ class GeminiPickPlaceExecutor(Node):
         return width
 
     def measure_object_extent(self, plan, image):
-        """Return (z_top, height) by projecting two pixels along the bbox
-        vertical centerline. Inset 8% inside the bbox so the rays land on the
+        """Return (z_top, height, z_bottom) by projecting two pixels along
+        the bbox vertical centerline. `z_bottom` is the projected z at the
+        bbox-bottom pixel — for an object resting on a flat surface this
+        approximates the table/surface level at the object's base. Inset 8% inside the bbox so the rays land on the
         object rather than the background — the bbox is often slightly loose,
         and projecting from the very edge can hit the table far behind/below
         the can, giving wildly wrong depths.
@@ -530,11 +568,11 @@ class GeminiPickPlaceExecutor(Node):
         """
         box = plan.get("target_object", {}).get("box")
         if not box or len(box) != 4:
-            return None, None
+            return None, None, None
         ymin, xmin, ymax, xmax = [float(v) for v in box]
         yspan = ymax - ymin
         if yspan <= 0:
-            return None, None
+            return None, None, None
         inset = 0.08 * yspan
         top_y = ymin + inset
         bottom_y = ymax - inset
@@ -548,7 +586,7 @@ class GeminiPickPlaceExecutor(Node):
         top_pt = self.project_pixel("box_top", top_pixel, image.header.frame_id)
         bottom_pt = self.project_pixel("box_bottom", bottom_pixel, image.header.frame_id)
         if top_pt is None or bottom_pt is None:
-            return None, None
+            return None, None, None
         z_top = float(top_pt.point.z)
         z_bottom = float(bottom_pt.point.z)
         height = z_top - z_bottom
@@ -562,12 +600,12 @@ class GeminiPickPlaceExecutor(Node):
                 f"z_bottom={z_bottom:.3f} height={height:.3f}m "
                 f"xy_spread={xy_spread:.3f}m; falling back"
             )
-            return None, None
+            return None, None, None
         self.get_logger().info(
             f"Measured object extent: z_top={z_top:.3f} z_bottom={z_bottom:.3f} "
             f"height={height:.3f}m"
         )
-        return z_top, height
+        return z_top, height, z_bottom
 
     def destination_point_2d(self, plan):
         destination = plan["destination"]
@@ -617,6 +655,59 @@ class GeminiPickPlaceExecutor(Node):
             self.get_logger().error(response.error_message)
             return None
         return {"response": response}
+
+    def call_verify_pick(self, target_label, image):
+        timeout_sec = float(self.get_parameter("service_timeout_sec").value)
+        if not self.verify_client.wait_for_service(timeout_sec=timeout_sec):
+            self.get_logger().error(
+                f"Timed out waiting for {self.get_parameter('verify_pick_service').value}"
+            )
+            return None
+
+        request = GeminiVerifyPick.Request()
+        request.target_label = target_label
+        request.image = image
+        future = self.verify_client.call_async(request)
+        while rclpy.ok() and not future.done():
+            time.sleep(0.05)
+        if not future.done() or future.result() is None:
+            self.get_logger().error("Verify service call did not return a response")
+            return None
+        return future.result()
+
+    def run_verify_pick_step(self, target_label):
+        if not bool(self.get_parameter("verify_pick_with_gemini").value):
+            self.get_logger().info("verify_pick disabled by parameter; skipping")
+            return True
+        if self.latest_image is None:
+            self.get_logger().warn(
+                "verify_pick: no image available; skipping verification"
+            )
+            return True
+        image = deepcopy(self.latest_image)
+        result = self.call_verify_pick(target_label, image)
+        required = bool(self.get_parameter("verify_pick_required").value)
+        if result is None or not result.success:
+            err = (result.error_message if result is not None else "no response")
+            self.get_logger().error(f"verify_pick: service failure ({err})")
+            return not required
+        self.get_logger().info(
+            f"verify_pick: picked_up={result.picked_up} "
+            f"confidence={result.confidence:.3f} reason={result.reason!r} "
+            f"log_path={result.log_path}"
+        )
+        if result.picked_up:
+            return True
+        if required:
+            self.get_logger().error(
+                f"Pick verification failed for '{target_label}': {result.reason}"
+            )
+            return False
+        self.get_logger().warn(
+            f"Pick verification failed for '{target_label}' but "
+            "verify_pick_required=false; continuing"
+        )
+        return True
 
     def project_pixel(self, name, pixel, frame_id):
         self.base_point_event.clear()
@@ -1388,7 +1479,13 @@ class GeminiPickPlaceExecutor(Node):
         return joint_value
 
     def execute_pick_place(
-        self, target_point, destination_point, grasp_width_m, object_height_m
+        self,
+        target_point,
+        destination_point,
+        grasp_width_m,
+        object_height_m,
+        table_z,
+        target_label,
     ):
         home = str(self.get_parameter("home_named").value)
         open_name = str(self.get_parameter("gripper_open_named").value)
@@ -1398,6 +1495,22 @@ class GeminiPickPlaceExecutor(Node):
         # target_point.z is the top of the object (set in run_once). Descend by
         # height * fraction so fingertips wrap around the side, not the top.
         grasp_descent = -float(object_height_m) * grasp_fraction
+        # Clamp the descent so the modeled pick fingertip stays at least
+        # `pick_z_safety_m` above `table_z`. Prevents the gripper from
+        # plunging into the table when perception or modeling under-estimates
+        # the can's height.
+        safety = float(self.get_parameter("pick_z_safety_m").value)
+        pick_z_min = float(table_z) + safety
+        pick_z_unclamped = float(target_point.point.z) + grasp_descent
+        if pick_z_unclamped < pick_z_min:
+            new_descent = pick_z_min - float(target_point.point.z)
+            self.get_logger().info(
+                f"pick clamped to table floor: pick_z={pick_z_min:.3f} "
+                f"(was {pick_z_unclamped:.3f}, table_z={table_z:.3f}, "
+                f"safety={safety:.3f}); descent {grasp_descent:.3f} -> "
+                f"{new_descent:.3f}"
+            )
+            grasp_descent = new_descent
         grip_value = self.grasp_grip_joint(grasp_width_m)
         self.get_logger().info(
             f"grasp descent below object top: {grasp_descent:.3f}m "
@@ -1419,6 +1532,8 @@ class GeminiPickPlaceExecutor(Node):
             ("06_lift",
              lambda: self.plan_and_execute_pose(
                  self.top_down_pose(target_point, pick_lift), "06_lift")),
+            ("06_verify_pick",
+             lambda: self.run_verify_pick_step(target_label)),
             ("06a_tuck_for_drive",
              lambda: self.plan_and_execute_named_arm(
                  str(self.get_parameter("carry_pose_named").value),
