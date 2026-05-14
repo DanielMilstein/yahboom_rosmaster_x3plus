@@ -182,11 +182,23 @@ class GeminiPickPlaceExecutor(Node):
         # level at the can's base). With "param", we use table_z_m directly.
         self.declare_parameter("table_z_source", "perception")
         self.declare_parameter("table_z_m", 0.14)
-        self.declare_parameter("pick_z_safety_m", 0.04)
+        # Generous default: 1-2 cm for perception z_bottom over-reading the
+        # actual table when the bbox is small, ~6 cm for the tip-offset
+        # modeling error on this gripper, ~2 cm true clearance.
+        self.declare_parameter("pick_z_safety_m", 0.10)
         # Gemini grasp verification after the pick + lift.
         self.declare_parameter("verify_pick_with_gemini", True)
         self.declare_parameter("verify_pick_required", True)
         self.declare_parameter("verify_pick_service", "/gemini_verify_pick")
+        # Named arm pose used to "show" the gripper (with whatever's in it) to
+        # the camera before verification — the joints fold the arm so the
+        # gripper opening faces the chassis-mounted camera. Defaults to the
+        # SRDF "init" pose, which lifts arm_link5 forward and up. Add a
+        # dedicated "show" group_state in the SRDF for more deliberate framing.
+        self.declare_parameter("verify_show_pose_named", "init")
+        # On verification failure (or any pick-phase failure), reset the gripper,
+        # restow, re-perceive, and try the pick again — up to this many times.
+        self.declare_parameter("max_pick_attempts", 3)
         self.declare_parameter("position_tolerance_m", 0.01)
         self.declare_parameter("orientation_xy_tol_rad", 0.1)
         self.declare_parameter("orientation_z_tol_rad", 3.14)
@@ -331,15 +343,10 @@ class GeminiPickPlaceExecutor(Node):
         initial_odom = None
         if execute and drive_enabled:
             pick_lift = float(self.get_parameter("pick_lift_m").value)
-            grasp_fraction = float(
-                self.get_parameter("grasp_z_fraction_from_top").value
-            )
-            fallback_height = float(
-                self.get_parameter("object_height_fallback_m").value
-            )
-            # Test both pre-pick (lifted) and the worst-case pick depth so the
-            # search doesn't pick an offset that only works at the easy height.
-            initial_pick_lifts = [pick_lift, -fallback_height * grasp_fraction]
+            # Test pre-pick (target.z + pick_lift) and the pick height
+            # (target.z, no descent below the bias point) so the chosen base
+            # offset works for both.
+            initial_pick_lifts = [pick_lift, 0.0]
             initial_odom = self.snapshot_odom()  # may be None in open-loop mode
             drive_result = self.drive_to_feasible(
                 target_point, initial_pick_lifts, "drive_to_reach_target"
@@ -399,12 +406,8 @@ class GeminiPickPlaceExecutor(Node):
         # Re-verify reachability and nudge the base again if needed.
         if execute and drive_enabled:
             pick_lift = float(self.get_parameter("pick_lift_m").value)
-            grasp_fraction = float(
-                self.get_parameter("grasp_z_fraction_from_top").value
-            )
-            # Use the *measured* object height for the actual pick depth now
-            # that it's known, so the search reflects the real planning target.
-            corrected_pick_lifts = [pick_lift, -object_height * grasp_fraction]
+            # Pick at target.z (no descent below it); pre-pick at target.z + lift.
+            corrected_pick_lifts = [pick_lift, 0.0]
             drive_result2 = self.drive_to_feasible(
                 target_point,
                 corrected_pick_lifts,
@@ -1478,27 +1481,22 @@ class GeminiPickPlaceExecutor(Node):
         )
         return joint_value
 
-    def execute_pick_place(
-        self,
-        target_point,
-        destination_point,
-        grasp_width_m,
-        object_height_m,
-        table_z,
-        target_label,
-    ):
-        home = str(self.get_parameter("home_named").value)
-        open_name = str(self.get_parameter("gripper_open_named").value)
-        pick_lift = float(self.get_parameter("pick_lift_m").value)
-        place_lift = float(self.get_parameter("place_lift_m").value)
-        grasp_fraction = float(self.get_parameter("grasp_z_fraction_from_top").value)
-        # target_point.z is the top of the object (set in run_once). Descend by
-        # height * fraction so fingertips wrap around the side, not the top.
-        grasp_descent = -float(object_height_m) * grasp_fraction
-        # Clamp the descent so the modeled pick fingertip stays at least
-        # `pick_z_safety_m` above `table_z`. Prevents the gripper from
-        # plunging into the table when perception or modeling under-estimates
-        # the can's height.
+    def _run_step_sequence(self, steps):
+        for name, action in steps:
+            self.get_logger().info(f"step '{name}' starting")
+            if not action():
+                self.get_logger().error(f"step '{name}' failed; aborting sequence")
+                return False
+        return True
+
+    def _clamp_grasp_descent(self, target_point, object_height_m, table_z):
+        """Compute the pick offset relative to target.z. Default is 0 — grasp
+        at target.z (Gemini's bias-pixel projection, typically on the can's
+        visible surface). The floor clamp can still raise this when target.z
+        itself dips below table_z + safety_margin. Returns the descent value
+        (positive = above target.z); logs the clamp when triggered.
+        """
+        grasp_descent = 0.0
         safety = float(self.get_parameter("pick_z_safety_m").value)
         pick_z_min = float(table_z) + safety
         pick_z_unclamped = float(target_point.point.z) + grasp_descent
@@ -1511,11 +1509,23 @@ class GeminiPickPlaceExecutor(Node):
                 f"{new_descent:.3f}"
             )
             grasp_descent = new_descent
-        grip_value = self.grasp_grip_joint(grasp_width_m)
         self.get_logger().info(
-            f"grasp descent below object top: {grasp_descent:.3f}m "
-            f"(height={object_height_m:.3f}m, fraction={grasp_fraction:.2f})"
+            f"grasp at target.z + {grasp_descent:.3f}m "
+            f"(object_height={object_height_m:.3f}m)"
         )
+        return grasp_descent
+
+    def _run_pick_phase(
+        self, target_point, grasp_width_m, object_height_m, table_z, target_label
+    ):
+        home = str(self.get_parameter("home_named").value)
+        open_name = str(self.get_parameter("gripper_open_named").value)
+        pick_lift = float(self.get_parameter("pick_lift_m").value)
+        verify_show_pose = str(self.get_parameter("verify_show_pose_named").value)
+        grasp_descent = self._clamp_grasp_descent(
+            target_point, object_height_m, table_z
+        )
+        grip_value = self.grasp_grip_joint(grasp_width_m)
 
         steps = [
             ("01_home", lambda: self.plan_and_execute_named_arm(home, "01_home")),
@@ -1532,8 +1542,19 @@ class GeminiPickPlaceExecutor(Node):
             ("06_lift",
              lambda: self.plan_and_execute_pose(
                  self.top_down_pose(target_point, pick_lift), "06_lift")),
+            ("06b_verify_show",
+             lambda: self.plan_and_execute_named_arm(
+                 verify_show_pose, "06b_verify_show")),
             ("06_verify_pick",
              lambda: self.run_verify_pick_step(target_label)),
+        ]
+        return self._run_step_sequence(steps)
+
+    def _run_place_phase(self, destination_point):
+        open_name = str(self.get_parameter("gripper_open_named").value)
+        place_lift = float(self.get_parameter("place_lift_m").value)
+
+        steps = [
             ("06a_tuck_for_drive",
              lambda: self.plan_and_execute_named_arm(
                  str(self.get_parameter("carry_pose_named").value),
@@ -1556,13 +1577,128 @@ class GeminiPickPlaceExecutor(Node):
              lambda: self.plan_and_execute_pose(
                  self.top_down_pose(destination_point, place_lift), "10_retreat")),
         ]
+        return self._run_step_sequence(steps)
 
-        for name, action in steps:
-            self.get_logger().info(f"step '{name}' starting")
-            if not action():
-                self.get_logger().error(f"step '{name}' failed; aborting sequence")
+    def _prepare_for_pick_retry(self, destination_point):
+        """Reset state before another pick attempt: open the gripper, stow the
+        arm, re-perceive, re-measure the object, and (if drive is enabled)
+        nudge the base for the new target. Returns a dict with the refreshed
+        (target_point, grasp_width_m, object_height_m, table_z) or None on
+        failure. `destination_point` is dead-reckoned through any extra drive.
+        """
+        open_name = str(self.get_parameter("gripper_open_named").value)
+        if not self.plan_and_execute_named_gripper(open_name, "retry_open_gripper"):
+            return None
+        if not self.plan_and_execute_stow("retry_stow_for_reperception"):
+            return None
+        perceived = self.perceive_targets()
+        if perceived is None:
+            return None
+        image, plan, target_point, _re_destination = perceived
+        # Destination has already been established once and dead-reckoned through
+        # the initial drive — keep that, don't trust re-perception of it.
+        self.sanitize_destination_z(target_point, destination_point)
+
+        z_top, measured_height, measured_z_bottom = self.measure_object_extent(
+            plan, image
+        )
+        if z_top is not None:
+            target_point.point.z = z_top
+        object_height = (
+            measured_height
+            if measured_height is not None and measured_height > 0.0
+            else float(self.get_parameter("object_height_fallback_m").value)
+        )
+        table_z_source = str(self.get_parameter("table_z_source").value).lower()
+        if table_z_source == "perception" and measured_z_bottom is not None:
+            table_z = float(measured_z_bottom)
+        else:
+            table_z = float(self.get_parameter("table_z_m").value)
+
+        # Re-verify reachability and nudge base if the new target xy/z slipped
+        # outside the previously-blessed feasibility window.
+        drive_enabled = bool(self.get_parameter("enable_base_drive").value)
+        if drive_enabled:
+            pick_lift = float(self.get_parameter("pick_lift_m").value)
+            corrected_lifts = [pick_lift, 0.0]
+            drive_result = self.drive_to_feasible(
+                target_point, corrected_lifts, "retry_drive_correction"
+            )
+            if not drive_result:
+                self.get_logger().error(
+                    "retry: drive_to_feasible could not place target in reach"
+                )
+                return None
+            applied_dx, applied_dy = drive_result
+            if applied_dx != 0.0 or applied_dy != 0.0:
+                destination_point.point.x = (
+                    float(destination_point.point.x) - applied_dx
+                )
+                destination_point.point.y = (
+                    float(destination_point.point.y) - applied_dy
+                )
+                self.get_logger().info(
+                    f"retry: destination dead-reckoned through correction drive: "
+                    f"({destination_point.point.x:.3f},"
+                    f"{destination_point.point.y:.3f},"
+                    f"{destination_point.point.z:.3f})"
+                )
+        grasp_width = self.measure_grasp_width(plan, image)
+        target_label = str(plan.get("target_object", {}).get("label", "object"))
+        return {
+            "target_point": target_point,
+            "grasp_width_m": grasp_width,
+            "object_height_m": object_height,
+            "table_z": table_z,
+            "target_label": target_label,
+        }
+
+    def execute_pick_place(
+        self,
+        target_point,
+        destination_point,
+        grasp_width_m,
+        object_height_m,
+        table_z,
+        target_label,
+    ):
+        max_attempts = max(1, int(self.get_parameter("max_pick_attempts").value))
+        pick_state = {
+            "target_point": target_point,
+            "grasp_width_m": grasp_width_m,
+            "object_height_m": object_height_m,
+            "table_z": table_z,
+            "target_label": target_label,
+        }
+        for attempt in range(1, max_attempts + 1):
+            self.get_logger().info(f"Pick attempt {attempt}/{max_attempts}")
+            ok = self._run_pick_phase(
+                pick_state["target_point"],
+                pick_state["grasp_width_m"],
+                pick_state["object_height_m"],
+                pick_state["table_z"],
+                pick_state["target_label"],
+            )
+            if ok:
+                break
+            if attempt >= max_attempts:
+                self.get_logger().error(
+                    f"All {max_attempts} pick attempts failed; aborting sequence"
+                )
                 return False
-        return True
+            self.get_logger().warn(
+                f"Pick attempt {attempt}/{max_attempts} failed; "
+                "resetting and retrying"
+            )
+            refreshed = self._prepare_for_pick_retry(destination_point)
+            if refreshed is None:
+                self.get_logger().error(
+                    "Could not prepare for pick retry; aborting sequence"
+                )
+                return False
+            pick_state = refreshed
+
+        return self._run_place_phase(destination_point)
 
     def make_sphere_marker(self, marker_id, namespace, point, color):
         marker = Marker()
