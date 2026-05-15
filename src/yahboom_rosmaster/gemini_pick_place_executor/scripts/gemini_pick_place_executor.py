@@ -204,9 +204,9 @@ class GeminiPickPlaceExecutor(Node):
         self.declare_parameter("close_grip_settle_time_s", 0.10)
         self.declare_parameter("close_grip_position_error_threshold_rad", 0.05)
         self.declare_parameter("close_grip_movement_threshold_rad", 0.01)
-        self.declare_parameter("close_grip_extra_grip_step_rad", 0.03)
+        self.declare_parameter("close_grip_extra_grip_step_rad", 0.06)
         self.declare_parameter("close_grip_hold_position_offset_rad", 0.0)
-        self.declare_parameter("close_grip_timeout_s", 10.0)
+        self.declare_parameter("close_grip_timeout_s", 30.0)
         self.declare_parameter("joint_states_topic", "/joint_states")
         # On verification failure (or any pick-phase failure), reset the gripper,
         # restow, re-perceive, and try the pick again — up to this many times.
