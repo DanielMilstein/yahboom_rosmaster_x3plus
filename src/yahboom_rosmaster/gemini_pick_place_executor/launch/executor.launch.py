@@ -63,6 +63,8 @@ FORWARDED_PARAMS = [
     ("drive_mode", "auto"),
     ("stow_for_perception", "true"),
     ("restow_after_place", "true"),
+    ("reset_on_failure", "true"),
+    ("failure_reset_pose_named", "up"),
     ("top_down_yaw", "0.0"),
     ("planning_time", "5.0"),
     ("velocity_scale", "0.3"),

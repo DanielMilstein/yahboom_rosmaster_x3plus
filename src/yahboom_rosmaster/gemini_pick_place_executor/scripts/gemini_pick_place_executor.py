@@ -259,6 +259,12 @@ class GeminiPickPlaceExecutor(Node):
         self.declare_parameter("stow_for_perception", True)
         self.declare_parameter("restow_after_place", True)
         self.declare_parameter("stow_settle_sec", 0.3)
+        # Auto-reset after a failed pick-and-place: open gripper, drive base
+        # back to the initial odom snapshot (= run-start position), park the
+        # arm at the named SRDF pose. Lets the user re-run without manually
+        # moving the robot back. Set to False for debugging-in-place.
+        self.declare_parameter("reset_on_failure", True)
+        self.declare_parameter("failure_reset_pose_named", "up")
 
         self.latest_image = None
         self.latest_base_point = None
@@ -503,6 +509,38 @@ class GeminiPickPlaceExecutor(Node):
                 self.drive_back_to(initial_odom)
             if success and bool(self.get_parameter("restow_after_place").value):
                 self.plan_and_execute_stow("end_stow")
+
+            # Failure cleanup: leave the robot in a known state so the user
+            # can rerun without manually moving anything. Each step is
+            # wrapped so a single reset failure doesn't skip the rest.
+            if (
+                not success
+                and bool(self.get_parameter("reset_on_failure").value)
+            ):
+                self.get_logger().info(
+                    "reset_on_failure enabled; returning robot to known state"
+                )
+                open_name = str(self.get_parameter("gripper_open_named").value)
+                failure_pose = str(
+                    self.get_parameter("failure_reset_pose_named").value
+                )
+                try:
+                    self.plan_and_execute_named_gripper(
+                        open_name, "failure_reset_open"
+                    )
+                except Exception as exc:
+                    self.get_logger().warn(f"failure_reset_open: {exc}")
+                if initial_odom is not None:
+                    try:
+                        self.drive_back_to(initial_odom)
+                    except Exception as exc:
+                        self.get_logger().warn(f"failure_reset_drive_back: {exc}")
+                try:
+                    self.plan_and_execute_named_arm(
+                        failure_pose, "failure_reset_to_up"
+                    )
+                except Exception as exc:
+                    self.get_logger().warn(f"failure_reset_to_up: {exc}")
 
     def perceive_targets(self):
         image = deepcopy(self.latest_image)
