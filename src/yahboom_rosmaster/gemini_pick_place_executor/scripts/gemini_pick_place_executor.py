@@ -1520,7 +1520,36 @@ class GeminiPickPlaceExecutor(Node):
         except Exception:
             pass
 
-        self.gripper_component.set_start_state_to_current_state()
+        # moveit_py's PlanningSceneMonitor lags badly during back-to-back
+        # gripper trajectories — by step 5 of the closed-loop close the PSM
+        # was 3 steps behind /joint_states, so set_start_state_to_current_state
+        # picked up a stale position and the trajectory-execution-manager
+        # rejected the plan with "start point deviates ...". Build the start
+        # state directly from our own /joint_states subscription so the plan
+        # starts where the joint actually is *right now*.
+        js = self.latest_joint_state
+        used_fresh_start = False
+        if js is not None and js.name:
+            start_state = RobotState(robot_model)
+            for jname, jpos in zip(js.name, js.position):
+                try:
+                    start_state.set_variable_position(jname, float(jpos))
+                except Exception:
+                    pass
+            try:
+                start_state.update()
+            except Exception:
+                pass
+            try:
+                self.gripper_component.set_start_state(robot_state=start_state)
+                used_fresh_start = True
+            except Exception as exc:
+                self.get_logger().warn(
+                    f"[{label}] set_start_state(robot_state=...) failed ({exc}); "
+                    "falling back to PSM start state"
+                )
+        if not used_fresh_start:
+            self.gripper_component.set_start_state_to_current_state()
         self.gripper_component.set_goal_state(robot_state=state)
         return self.plan_and_execute(self.gripper_component, gripper_name, label)
 
