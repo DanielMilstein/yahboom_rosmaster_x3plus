@@ -9,7 +9,7 @@ from copy import deepcopy
 from geometry_msgs.msg import PointStamped, PoseStamped, TwistStamped
 from moveit_msgs.msg import Constraints, OrientationConstraint, PositionConstraint
 from nav_msgs.msg import Odometry
-from sensor_msgs.msg import Image
+from sensor_msgs.msg import Image, JointState
 from shape_msgs.msg import SolidPrimitive
 from std_msgs.msg import ColorRGBA
 from visualization_msgs.msg import Marker, MarkerArray
@@ -191,11 +191,23 @@ class GeminiPickPlaceExecutor(Node):
         self.declare_parameter("verify_pick_required", True)
         self.declare_parameter("verify_pick_service", "/gemini_verify_pick")
         # Named arm pose used to "show" the gripper (with whatever's in it) to
-        # the camera before verification — the joints fold the arm so the
-        # gripper opening faces the chassis-mounted camera. Defaults to the
-        # SRDF "init" pose, which lifts arm_link5 forward and up. Add a
-        # dedicated "show" group_state in the SRDF for more deliberate framing.
-        self.declare_parameter("verify_show_pose_named", "init")
+        # the camera before verification — see the "show" group_state in the
+        # SRDF. Override if you want a different framing.
+        self.declare_parameter("verify_show_pose_named", "show")
+        # Closed-loop gripper close. Step the commanded grip_joint position
+        # toward closed in small increments, read back actual position from
+        # /joint_states, and stop on stall (commanded keeps advancing, actual
+        # stops following). On contact, apply a tiny extra clamp and hold.
+        # If no contact is detected before reaching the close limit or the
+        # timeout, return failure → the pick retry loop kicks in.
+        self.declare_parameter("close_grip_step_size_rad", 0.05)
+        self.declare_parameter("close_grip_settle_time_s", 0.10)
+        self.declare_parameter("close_grip_position_error_threshold_rad", 0.05)
+        self.declare_parameter("close_grip_movement_threshold_rad", 0.01)
+        self.declare_parameter("close_grip_extra_grip_step_rad", 0.03)
+        self.declare_parameter("close_grip_hold_position_offset_rad", 0.0)
+        self.declare_parameter("close_grip_timeout_s", 10.0)
+        self.declare_parameter("joint_states_topic", "/joint_states")
         # On verification failure (or any pick-phase failure), reset the gripper,
         # restow, re-perceive, and try the pick again — up to this many times.
         self.declare_parameter("max_pick_attempts", 3)
@@ -240,6 +252,7 @@ class GeminiPickPlaceExecutor(Node):
         self.worker_lock = threading.Lock()
         self.latest_odom = None
         self.odom_event = threading.Event()
+        self.latest_joint_state = None
 
         image_topic = self.get_parameter("image_topic").value
         pixel_topic = self.get_parameter("pixel_topic").value
@@ -251,6 +264,10 @@ class GeminiPickPlaceExecutor(Node):
         self.image_sub = self.create_subscription(Image, image_topic, self.image_callback, 10)
         self.base_point_sub = self.create_subscription(
             PointStamped, base_point_topic, self.base_point_callback, 10
+        )
+        joint_states_topic = str(self.get_parameter("joint_states_topic").value)
+        self.joint_state_sub = self.create_subscription(
+            JointState, joint_states_topic, self.joint_state_callback, 10
         )
         self.pixel_pub = self.create_publisher(PointStamped, pixel_topic, 10)
         marker_qos = QoSProfile(
@@ -312,6 +329,21 @@ class GeminiPickPlaceExecutor(Node):
     def odom_callback(self, msg):
         self.latest_odom = msg
         self.odom_event.set()
+
+    def joint_state_callback(self, msg):
+        self.latest_joint_state = msg
+
+    def _get_joint_position(self, name):
+        msg = self.latest_joint_state
+        if msg is None:
+            return None
+        try:
+            idx = list(msg.name).index(name)
+        except ValueError:
+            return None
+        if idx >= len(msg.position):
+            return None
+        return float(msg.position[idx])
 
     def maybe_start(self):
         if not bool(self.get_parameter("auto_start").value):
@@ -1469,6 +1501,127 @@ class GeminiPickPlaceExecutor(Node):
         self.gripper_component.set_goal_state(robot_state=state)
         return self.plan_and_execute(self.gripper_component, gripper_name, label)
 
+    def _close_gripper_until_contact(self, label):
+        """Step the grip_joint command toward the SRDF "close" limit (0.0 rad)
+        in small increments. After each step, read back the actual grip_joint
+        position from /joint_states. Stop when actual lags command (the fingers
+        hit something) and apply a small extra clamp to firm the hold. Returns
+        True on contact, False if no contact found before fully closing or
+        timing out — which lets the pick retry loop kick in.
+
+        Stall is detected when EITHER:
+          * actual joint delta between steps < movement_threshold (after the
+            first step), OR
+          * |commanded - actual| > position_error_threshold.
+        """
+        step_size = float(self.get_parameter("close_grip_step_size_rad").value)
+        settle = float(self.get_parameter("close_grip_settle_time_s").value)
+        err_thresh = float(
+            self.get_parameter("close_grip_position_error_threshold_rad").value
+        )
+        move_thresh = float(
+            self.get_parameter("close_grip_movement_threshold_rad").value
+        )
+        extra_grip = float(self.get_parameter("close_grip_extra_grip_step_rad").value)
+        hold_offset = float(
+            self.get_parameter("close_grip_hold_position_offset_rad").value
+        )
+        timeout = float(self.get_parameter("close_grip_timeout_s").value)
+        # SRDF "close" = 0.0; "open" = -1.54. Closing = increasing toward 0.
+        close_limit = 0.0
+
+        if step_size <= 0.0:
+            self.get_logger().error(
+                f"[{label}] close_grip_step_size_rad must be > 0; got {step_size}"
+            )
+            return False
+
+        start_time = time.time()
+        current = self._get_joint_position("grip_joint")
+        if current is None:
+            self.get_logger().error(
+                f"[{label}] no grip_joint position from /joint_states; "
+                "cannot run closed-loop close"
+            )
+            return False
+
+        commanded = current
+        prev_actual = current
+        contact = False
+        stop_reason = "timeout"
+        step_count = 0
+
+        while time.time() - start_time < timeout:
+            step_count += 1
+            commanded = min(close_limit, commanded + step_size)
+            if not self.plan_and_execute_gripper_value(
+                commanded, f"{label}_step{step_count}"
+            ):
+                self.get_logger().error(
+                    f"[{label}] step {step_count} plan/execute failed at cmd={commanded:.3f}"
+                )
+                return False
+            if settle > 0.0:
+                time.sleep(settle)
+            actual = self._get_joint_position("grip_joint")
+            if actual is None:
+                self.get_logger().warn(
+                    f"[{label}] no joint state after step {step_count}; "
+                    "skipping stall check"
+                )
+                continue
+            movement = abs(actual - prev_actual)
+            position_error = commanded - actual  # positive = actual lags command
+            self.get_logger().info(
+                f"[{label}] step {step_count}: cmd={commanded:.3f} "
+                f"actual={actual:.3f} delta={movement:.3f} err={position_error:.3f} "
+                f"contact=False"
+            )
+            stalled_by_movement = step_count > 1 and movement < move_thresh
+            stalled_by_error = position_error > err_thresh
+            if stalled_by_movement or stalled_by_error:
+                contact = True
+                stop_reason = (
+                    "movement < threshold"
+                    if stalled_by_movement
+                    else "position error > threshold"
+                )
+                self.get_logger().info(
+                    f"[{label}] contact detected after step {step_count} "
+                    f"(reason: {stop_reason})"
+                )
+                break
+            prev_actual = actual
+            if commanded >= close_limit - 1e-6:
+                stop_reason = "fully closed, no contact"
+                break
+
+        if not contact:
+            self.get_logger().error(
+                f"[{label}] no contact detected (stop_reason={stop_reason!r}, "
+                f"steps={step_count}); gripper closed without finding the object"
+            )
+            return False
+
+        hold = max(commanded - 1.0, min(close_limit, commanded + extra_grip + hold_offset))
+        self.get_logger().info(
+            f"[{label}] commanding hold position {hold:.3f} "
+            f"(commanded={commanded:.3f} + extra_grip={extra_grip:.3f} "
+            f"+ hold_offset={hold_offset:.3f})"
+        )
+        if not self.plan_and_execute_gripper_value(hold, f"{label}_hold"):
+            self.get_logger().error(
+                f"[{label}] could not apply hold position {hold:.3f}"
+            )
+            return False
+        final_actual = self._get_joint_position("grip_joint")
+        self.get_logger().info(
+            f"[{label}] final hold position={hold:.3f} "
+            f"(actual={final_actual if final_actual is None else f'{final_actual:.3f}'}), "
+            f"stop_reason={stop_reason!r}"
+        )
+        return True
+
     def grasp_grip_joint(self, measured_width_m):
         clearance = float(self.get_parameter("grasp_clearance_m").value)
         min_w = float(self.get_parameter("min_grasp_width_m").value)
@@ -1538,7 +1691,7 @@ class GeminiPickPlaceExecutor(Node):
              lambda: self.plan_and_execute_pose(
                  self.top_down_pose(target_point, grasp_descent), "04_pick")),
             ("05_close_gripper",
-             lambda: self.plan_and_execute_gripper_value(grip_value, "05_close_gripper")),
+             lambda: self._close_gripper_until_contact("05_close_gripper")),
             ("06_lift",
              lambda: self.plan_and_execute_pose(
                  self.top_down_pose(target_point, pick_lift), "06_lift")),

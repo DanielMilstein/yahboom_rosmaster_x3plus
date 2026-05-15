@@ -46,6 +46,15 @@
         <joint name="arm_joint4" value="-1.5708"/>
         <joint name="arm_joint5" value="0"/>
     </group_state>
+    <!-- Verify-show pose: folds the arm forward like 'init' but with arm_joint3
+         at -10 deg so the gripper is in front of the chassis camera. -->
+    <group_state name="show" group="arm_group">
+        <joint name="arm_joint1" value="0"/>
+        <joint name="arm_joint2" value="0.7854"/>
+        <joint name="arm_joint3" value="-0.1745"/>
+        <joint name="arm_joint4" value="-1.5708"/>
+        <joint name="arm_joint5" value="0"/>
+    </group_state>
     <group_state name="close" group="grip_group">
         <joint name="grip_joint" value="0"/>
     </group_state>
