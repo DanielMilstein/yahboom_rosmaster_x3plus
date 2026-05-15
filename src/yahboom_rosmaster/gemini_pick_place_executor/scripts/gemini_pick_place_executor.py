@@ -205,11 +205,15 @@ class GeminiPickPlaceExecutor(Node):
         # timeout, return failure → the pick retry loop kicks in.
         self.declare_parameter("close_grip_step_size_rad", 0.05)
         self.declare_parameter("close_grip_settle_time_s", 0.10)
-        self.declare_parameter("close_grip_position_error_threshold_rad", 0.05)
+        # 3x step_size — transient per-step lag stays under threshold so only
+        # genuine stalls trip contact.
+        self.declare_parameter("close_grip_position_error_threshold_rad", 0.15)
         self.declare_parameter("close_grip_movement_threshold_rad", 0.01)
         self.declare_parameter("close_grip_extra_grip_step_rad", 0.06)
         self.declare_parameter("close_grip_hold_position_offset_rad", 0.0)
-        self.declare_parameter("close_grip_timeout_s", 30.0)
+        # Each step takes ~1s in the direct-action path; full close from
+        # -1.54 to 0.0 at step_size=0.05 is ~31 steps.
+        self.declare_parameter("close_grip_timeout_s", 35.0)
         self.declare_parameter("joint_states_topic", "/joint_states")
         # Direct-controller action for per-step gripper close. moveit_py's
         # PlanningSceneMonitor lags badly during back-to-back gripper trajectories
