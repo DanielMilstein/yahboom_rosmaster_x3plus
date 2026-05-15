@@ -838,8 +838,27 @@ class GeminiPickPlaceExecutor(Node):
             return False
         self.get_logger().info(f"[{label}] plan ok, executing on '{group_name}'")
         status = self.moveit.execute(group_name, trajectory)
-        self.get_logger().info(f"[{label}] execution status: {status}")
-        return True
+        # moveit_py exposes ExecutionStatus; SUCCEEDED is the only outcome that
+        # actually moved the robot to the goal. Trajectory-execution rejection
+        # (e.g. "Invalid Trajectory: start point deviates ...") shows up as a
+        # non-SUCCEEDED status here, but plan_and_execute used to swallow it.
+        # Treat anything else as a failure so the caller can react — important
+        # for the closed-loop gripper close where a rejected step otherwise
+        # masquerades as physical contact.
+        ok = True
+        status_text = str(status)
+        try:
+            attr = getattr(status, "status", None)
+            if attr is not None:
+                status_text = str(attr)
+        except Exception:
+            pass
+        if "SUCCEED" not in status_text.upper():
+            ok = False
+        self.get_logger().info(
+            f"[{label}] execution status: {status} (success={ok})"
+        )
+        return ok
 
     def candidate_orientations(self, target_x, target_y):
         """Generate fallback orientations from top-down to tilted, all yawed to face target.

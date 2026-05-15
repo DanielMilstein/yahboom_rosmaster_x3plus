@@ -15,3 +15,14 @@ plan_request_params:
   planning_pipeline: ompl
   max_velocity_scaling_factor: 0.3
   max_acceleration_scaling_factor: 0.3
+
+# Trajectory execution tolerances for the in-process MoveItPy trajectory
+# manager. The grip_joint in particular drifts a few centiradians between
+# plan-time and execute-time during the closed-loop close — the default 0.01
+# rad tolerance rejects most steps and makes stall detection unreliable. 0.05
+# rad absorbs the lag without hiding real controller faults.
+trajectory_execution:
+  allowed_execution_duration_scaling: 1.2
+  allowed_goal_duration_margin: 0.5
+  allowed_start_tolerance: 0.05
+  execution_velocity_scaling: 1.0
