@@ -21,18 +21,18 @@ FORWARDED_PARAMS = [
     ("verify_pick_with_gemini", "true"),
     ("verify_pick_required", "true"),
     ("verify_show_pose_named", "show"),
-    ("max_pick_attempts", "3"),
+    ("max_pick_attempts", "5"),
     ("close_grip_step_size_rad", "0.05"),
-    ("close_grip_settle_time_s", "0.1"),
+    ("close_grip_settle_time_s", "0.3"),
     # 3x step_size, so transient lag never trips contact before a real stall does.
     ("close_grip_position_error_threshold_rad", "0.15"),
-    ("close_grip_movement_threshold_rad", "0.01"),
+    ("close_grip_movement_threshold_rad", "0.05"),
     ("close_grip_extra_grip_step_rad", "0.03"),
     ("close_grip_hold_position_offset_rad", "0.0"),
     # Each step takes ~1s under the direct-action path; full close from
     # open=-1.54 to close=0.0 at step_size=0.05 is ~31 steps. 35s budget
     # leaves headroom for system jitter.
-    ("close_grip_timeout_s", "35.0"),
+    ("close_grip_timeout_s", "50.0"),
     ("carry_pose_named", "up"),
     ("gripper_tcp_offset_z", "0.09"),
     ("gripper_tip_offset_xyz", "[0.0, 0.0, -0.09]"),
