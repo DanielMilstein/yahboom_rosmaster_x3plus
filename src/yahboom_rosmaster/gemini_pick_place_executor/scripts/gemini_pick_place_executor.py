@@ -6,15 +6,18 @@ import threading
 import time
 from copy import deepcopy
 
+from control_msgs.action import FollowJointTrajectory
 from geometry_msgs.msg import PointStamped, PoseStamped, TwistStamped
 from moveit_msgs.msg import Constraints, OrientationConstraint, PositionConstraint
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import Image, JointState
 from shape_msgs.msg import SolidPrimitive
 from std_msgs.msg import ColorRGBA
+from trajectory_msgs.msg import JointTrajectoryPoint
 from visualization_msgs.msg import Marker, MarkerArray
 
 import rclpy
+from rclpy.action import ActionClient
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
 from yahboom_rosmaster_msgs.srv import GeminiPickPlace, GeminiVerifyPick
@@ -208,6 +211,14 @@ class GeminiPickPlaceExecutor(Node):
         self.declare_parameter("close_grip_hold_position_offset_rad", 0.0)
         self.declare_parameter("close_grip_timeout_s", 30.0)
         self.declare_parameter("joint_states_topic", "/joint_states")
+        # Direct-controller action for per-step gripper close. moveit_py's
+        # PlanningSceneMonitor lags badly during back-to-back gripper trajectories
+        # (the staleness blew up to 0.78 rad of phantom "start state" mismatch
+        # within a few steps), so the close loop talks to the controller directly.
+        self.declare_parameter(
+            "gripper_action_topic",
+            "/gripper_controller/follow_joint_trajectory",
+        )
         # On verification failure (or any pick-phase failure), reset the gripper,
         # restow, re-perceive, and try the pick again — up to this many times.
         self.declare_parameter("max_pick_attempts", 3)
@@ -253,6 +264,7 @@ class GeminiPickPlaceExecutor(Node):
         self.latest_odom = None
         self.odom_event = threading.Event()
         self.latest_joint_state = None
+        self._gripper_action_client = None
 
         image_topic = self.get_parameter("image_topic").value
         pixel_topic = self.get_parameter("pixel_topic").value
@@ -1520,38 +1532,63 @@ class GeminiPickPlaceExecutor(Node):
         except Exception:
             pass
 
-        # moveit_py's PlanningSceneMonitor lags badly during back-to-back
-        # gripper trajectories — by step 5 of the closed-loop close the PSM
-        # was 3 steps behind /joint_states, so set_start_state_to_current_state
-        # picked up a stale position and the trajectory-execution-manager
-        # rejected the plan with "start point deviates ...". Build the start
-        # state directly from our own /joint_states subscription so the plan
-        # starts where the joint actually is *right now*.
-        js = self.latest_joint_state
-        used_fresh_start = False
-        if js is not None and js.name:
-            start_state = RobotState(robot_model)
-            for jname, jpos in zip(js.name, js.position):
-                try:
-                    start_state.set_variable_position(jname, float(jpos))
-                except Exception:
-                    pass
-            try:
-                start_state.update()
-            except Exception:
-                pass
-            try:
-                self.gripper_component.set_start_state(robot_state=start_state)
-                used_fresh_start = True
-            except Exception as exc:
-                self.get_logger().warn(
-                    f"[{label}] set_start_state(robot_state=...) failed ({exc}); "
-                    "falling back to PSM start state"
-                )
-        if not used_fresh_start:
-            self.gripper_component.set_start_state_to_current_state()
+        self.gripper_component.set_start_state_to_current_state()
         self.gripper_component.set_goal_state(robot_state=state)
         return self.plan_and_execute(self.gripper_component, gripper_name, label)
+
+    def _send_gripper_position_direct(self, target_value, label, duration_s=0.5):
+        """Send a single-waypoint trajectory to the gripper controller's
+        FollowJointTrajectory action, bypassing MoveIt entirely. The controller
+        validates against its own /joint_states reading (no PSM staleness),
+        which is what we need for the rapid back-to-back close steps.
+
+        Returns True if the action succeeded, False otherwise.
+        """
+        if self._gripper_action_client is None:
+            topic = str(self.get_parameter("gripper_action_topic").value)
+            self._gripper_action_client = ActionClient(
+                self, FollowJointTrajectory, topic
+            )
+        if not self._gripper_action_client.wait_for_server(timeout_sec=2.0):
+            self.get_logger().error(
+                f"[{label}] gripper action server "
+                f"{self.get_parameter('gripper_action_topic').value!r} unavailable"
+            )
+            return False
+
+        goal = FollowJointTrajectory.Goal()
+        goal.trajectory.joint_names = ["grip_joint"]
+        point = JointTrajectoryPoint()
+        point.positions = [float(target_value)]
+        sec = int(duration_s)
+        point.time_from_start.sec = sec
+        point.time_from_start.nanosec = int((duration_s - sec) * 1e9)
+        goal.trajectory.points.append(point)
+
+        send_future = self._gripper_action_client.send_goal_async(goal)
+        deadline = time.time() + 5.0
+        while rclpy.ok() and not send_future.done() and time.time() < deadline:
+            time.sleep(0.01)
+        if not send_future.done():
+            self.get_logger().error(f"[{label}] send_goal_async timed out")
+            return False
+        goal_handle = send_future.result()
+        if goal_handle is None or not goal_handle.accepted:
+            self.get_logger().error(
+                f"[{label}] gripper action goal rejected (cmd={target_value:.3f})"
+            )
+            return False
+
+        result_future = goal_handle.get_result_async()
+        deadline = time.time() + duration_s + 2.0
+        while rclpy.ok() and not result_future.done() and time.time() < deadline:
+            time.sleep(0.01)
+        if not result_future.done():
+            self.get_logger().warn(
+                f"[{label}] gripper action result wait timed out (cmd={target_value:.3f})"
+            )
+            return False
+        return True
 
     def _close_gripper_until_contact(self, label):
         """Step the grip_joint command toward the SRDF "close" limit (0.0 rad)
@@ -1606,11 +1643,11 @@ class GeminiPickPlaceExecutor(Node):
         while time.time() - start_time < timeout:
             step_count += 1
             commanded = min(close_limit, commanded + step_size)
-            if not self.plan_and_execute_gripper_value(
-                commanded, f"{label}_step{step_count}"
+            if not self._send_gripper_position_direct(
+                commanded, f"{label}_step{step_count}", duration_s=0.4
             ):
                 self.get_logger().error(
-                    f"[{label}] step {step_count} plan/execute failed at cmd={commanded:.3f}"
+                    f"[{label}] step {step_count} action failed at cmd={commanded:.3f}"
                 )
                 return False
             if settle > 0.0:
@@ -1661,7 +1698,9 @@ class GeminiPickPlaceExecutor(Node):
             f"(commanded={commanded:.3f} + extra_grip={extra_grip:.3f} "
             f"+ hold_offset={hold_offset:.3f})"
         )
-        if not self.plan_and_execute_gripper_value(hold, f"{label}_hold"):
+        if not self._send_gripper_position_direct(
+            hold, f"{label}_hold", duration_s=0.4
+        ):
             self.get_logger().error(
                 f"[{label}] could not apply hold position {hold:.3f}"
             )
