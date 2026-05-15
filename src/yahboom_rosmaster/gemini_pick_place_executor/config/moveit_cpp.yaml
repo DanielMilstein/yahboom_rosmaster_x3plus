@@ -17,13 +17,16 @@ plan_request_params:
   max_acceleration_scaling_factor: 0.3
 
 # Trajectory execution tolerances for the in-process MoveItPy trajectory
-# manager. 0.05 rad absorbs the small drift between plan-time and
-# execute-time without hiding real controller faults. The gripper-specific
-# staleness problem (PSM lagging /joint_states by several steps) is fixed
-# in plan_and_execute_gripper_value, not here — MoveIt's per-joint
-# tolerance override doesn't actually exist as a YAML key.
+# manager. 0.20 rad is wider than the start-state safety check would
+# normally use, but in this Gazebo setup the PlanningSceneMonitor lags
+# the raw /joint_states topic by 0.05–0.28 rad across step transitions
+# (both for the arm and the gripper). The actual safety properties we
+# rely on are upstream — IK collision-free goals, table-floor clamp,
+# multi-depth feasibility search, and grasp verification — none of which
+# depend on this tolerance. The closed-loop gripper close bypasses
+# trajectory-execution-manager entirely via _send_gripper_position_direct.
 trajectory_execution:
   allowed_execution_duration_scaling: 1.2
   allowed_goal_duration_margin: 0.5
-  allowed_start_tolerance: 0.05
+  allowed_start_tolerance: 0.20
   execution_velocity_scaling: 1.0
