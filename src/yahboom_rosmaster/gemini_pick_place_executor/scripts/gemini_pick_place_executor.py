@@ -838,26 +838,30 @@ class GeminiPickPlaceExecutor(Node):
             return False
         self.get_logger().info(f"[{label}] plan ok, executing on '{group_name}'")
         status = self.moveit.execute(group_name, trajectory)
-        # moveit_py exposes ExecutionStatus; SUCCEEDED is the only outcome that
-        # actually moved the robot to the goal. Trajectory-execution rejection
-        # (e.g. "Invalid Trajectory: start point deviates ...") shows up as a
-        # non-SUCCEEDED status here, but plan_and_execute used to swallow it.
-        # Treat anything else as a failure so the caller can react — important
-        # for the closed-loop gripper close where a rejected step otherwise
-        # masquerades as physical contact.
-        ok = True
-        status_text = str(status)
+        # moveit_py's execute() is asynchronous and frequently returns with
+        # status RUNNING before the controller actually finishes, especially
+        # for the longer arm trajectories. The default ExecutionStatus repr
+        # also doesn't include a useful keyword. So: be permissive — only
+        # return False when the status text explicitly says the trajectory
+        # was rejected or aborted by the trajectory-execution-manager (the
+        # case we care about — "Invalid Trajectory: start point deviates…"
+        # rejections show up as ABORTED). RUNNING / SUCCEEDED / UNKNOWN /
+        # default-repr all pass through as success.
+        status_text = ""
         try:
             attr = getattr(status, "status", None)
             if attr is not None:
                 status_text = str(attr)
+            else:
+                status_text = str(status)
         except Exception:
-            pass
-        if "SUCCEED" not in status_text.upper():
-            ok = False
-        self.get_logger().info(
-            f"[{label}] execution status: {status} (success={ok})"
-        )
+            status_text = ""
+        ok = True
+        for fail_word in ("ABORTED", "FAILED", "REJECT", "INVALID"):
+            if fail_word in status_text.upper():
+                ok = False
+                break
+        self.get_logger().info(f"[{label}] execution status: {status}")
         return ok
 
     def candidate_orientations(self, target_x, target_y):
