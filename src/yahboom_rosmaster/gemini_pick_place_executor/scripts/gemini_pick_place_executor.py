@@ -205,10 +205,13 @@ class GeminiPickPlaceExecutor(Node):
         # timeout, return failure → the pick retry loop kicks in.
         self.declare_parameter("close_grip_step_size_rad", 0.05)
         self.declare_parameter("close_grip_settle_time_s", 0.10)
-        # 3x step_size — transient per-step lag stays under threshold so only
-        # genuine stalls trip contact.
-        self.declare_parameter("close_grip_position_error_threshold_rad", 0.15)
-        self.declare_parameter("close_grip_movement_threshold_rad", 0.01)
+        # Calibrated against observed close-loop telemetry: in free motion,
+        # `delta` sits at ~0.05 and `err` at ~0.003. At first contact `delta`
+        # drops below 0.04 and `err` rises past 0.010. The thresholds below
+        # cleanly separate the two regimes — and either signal alone fires
+        # contact (OR logic in the step loop).
+        self.declare_parameter("close_grip_position_error_threshold_rad", 0.010)
+        self.declare_parameter("close_grip_movement_threshold_rad", 0.040)
         self.declare_parameter("close_grip_extra_grip_step_rad", 0.06)
         self.declare_parameter("close_grip_hold_position_offset_rad", 0.0)
         # Each step takes ~1s in the direct-action path; full close from
@@ -1740,13 +1743,23 @@ class GeminiPickPlaceExecutor(Node):
             f"(commanded={commanded:.3f} + extra_grip={extra_grip:.3f} "
             f"+ hold_offset={hold_offset:.3f})"
         )
-        if not self._send_gripper_position_direct(
+        hold_ok = self._send_gripper_position_direct(
             hold, f"{label}_hold", duration_s=0.4
-        ):
-            self.get_logger().error(
-                f"[{label}] could not apply hold position {hold:.3f}"
+        )
+        if not hold_ok:
+            # When the joint is in contact with the object, the controller
+            # can't physically reach `hold` (which is `commanded + extra_grip`
+            # past the contact position), so the FollowJointTrajectory action
+            # result never returns within our wait window. The controller is
+            # still pushing into the object the whole time — that IS the
+            # clamp force we wanted. Treat this as soft success and proceed
+            # to lift; the next gripper command (the place-step open) will
+            # preempt this still-active hold action cleanly.
+            self.get_logger().warn(
+                f"[{label}] hold action did not return within timeout — "
+                f"controller is likely still pushing into the contact, "
+                f"treating as successful grip (cmd={hold:.3f})"
             )
-            return False
         final_actual = self._get_joint_position("grip_joint")
         self.get_logger().info(
             f"[{label}] final hold position={hold:.3f} "

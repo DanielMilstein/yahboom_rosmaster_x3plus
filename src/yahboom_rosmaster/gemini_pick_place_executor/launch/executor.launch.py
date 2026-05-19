@@ -24,9 +24,11 @@ FORWARDED_PARAMS = [
     ("max_pick_attempts", "5"),
     ("close_grip_step_size_rad", "0.05"),
     ("close_grip_settle_time_s", "0.3"),
-    # 3x step_size, so transient lag never trips contact before a real stall does.
-    ("close_grip_position_error_threshold_rad", "0.15"),
-    ("close_grip_movement_threshold_rad", "0.05"),
+    # Calibrated to free-motion noise: delta~0.050 / err~0.003 normally;
+    # first contact has delta<0.04 and err>0.010. Either signal trips
+    # contact (OR semantics in the step loop).
+    ("close_grip_position_error_threshold_rad", "0.010"),
+    ("close_grip_movement_threshold_rad", "0.040"),
     ("close_grip_extra_grip_step_rad", "0.03"),
     ("close_grip_hold_position_offset_rad", "0.0"),
     # Each step takes ~1s under the direct-action path; full close from
