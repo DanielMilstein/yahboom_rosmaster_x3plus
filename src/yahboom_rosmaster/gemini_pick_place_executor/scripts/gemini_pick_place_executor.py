@@ -205,12 +205,14 @@ class GeminiPickPlaceExecutor(Node):
         # timeout, return failure → the pick retry loop kicks in.
         self.declare_parameter("close_grip_step_size_rad", 0.05)
         self.declare_parameter("close_grip_settle_time_s", 0.10)
-        # Calibrated against observed close-loop telemetry: in free motion,
-        # `delta` sits at ~0.05 and `err` at ~0.003. At first contact `delta`
-        # drops below 0.04 and `err` rises past ~0.016. The thresholds below
-        # cleanly separate the two regimes; the step loop also skips both
-        # checks on step 1 because the joint is still accelerating from rest.
-        self.declare_parameter("close_grip_position_error_threshold_rad", 0.015)
+        # Calibrated against observed close-loop telemetry. Free-motion `err`
+        # has been seen between 0.003 and 0.014 depending on Gazebo load and
+        # controller jitter; real contact pushes it past 0.025+ (and the
+        # movement signal drops below 0.040 at the same time). 0.025 stays
+        # clearly above the noisy-run baseline so we don't fire on jitter.
+        # The step loop skips both checks on step 1 (the joint is still
+        # accelerating from rest).
+        self.declare_parameter("close_grip_position_error_threshold_rad", 0.025)
         self.declare_parameter("close_grip_movement_threshold_rad", 0.040)
         self.declare_parameter("close_grip_extra_grip_step_rad", 0.06)
         self.declare_parameter("close_grip_hold_position_offset_rad", 0.0)
