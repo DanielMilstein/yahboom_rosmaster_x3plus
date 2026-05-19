@@ -207,12 +207,13 @@ class GeminiPickPlaceExecutor(Node):
         self.declare_parameter("close_grip_settle_time_s", 0.10)
         # Calibrated against observed close-loop telemetry. Free-motion `err`
         # has been seen between 0.003 and 0.014 depending on Gazebo load and
-        # controller jitter; real contact pushes it past 0.025+ (and the
-        # movement signal drops below 0.040 at the same time). 0.025 stays
-        # clearly above the noisy-run baseline so we don't fire on jitter.
-        # The step loop skips both checks on step 1 (the joint is still
-        # accelerating from rest).
-        self.declare_parameter("close_grip_position_error_threshold_rad", 0.025)
+        # controller jitter; real contact onset reads ~0.018-0.019. 0.018 sits
+        # just above the observed quiet-run noise ceiling with a ~1.5x margin
+        # and catches the typical onset. Step 1 is exempt (rest-state
+        # acceleration transient). The mid-loop step-action-timeout backstop
+        # (see step loop below) catches any gradual contact where `err`
+        # plateaus below this threshold without ever crossing it.
+        self.declare_parameter("close_grip_position_error_threshold_rad", 0.018)
         self.declare_parameter("close_grip_movement_threshold_rad", 0.040)
         self.declare_parameter("close_grip_extra_grip_step_rad", 0.06)
         self.declare_parameter("close_grip_hold_position_offset_rad", 0.0)
@@ -1690,13 +1691,27 @@ class GeminiPickPlaceExecutor(Node):
         while time.time() - start_time < timeout:
             step_count += 1
             commanded = min(close_limit, commanded + step_size)
-            if not self._send_gripper_position_direct(
+            step_ok = self._send_gripper_position_direct(
                 commanded, f"{label}_step{step_count}", duration_s=0.4
-            ):
-                self.get_logger().error(
-                    f"[{label}] step {step_count} action failed at cmd={commanded:.3f}"
+            )
+            if not step_ok:
+                # The controller timed out trying to reach `commanded`. Mid-range
+                # and past step 1, the only reason that happens is the gripper is
+                # physically blocked — i.e., contact. Treat the same as a stall
+                # detection: declare contact, fall through to hold logic.
+                if step_count <= 1:
+                    self.get_logger().error(
+                        f"[{label}] step {step_count} action failed at cmd={commanded:.3f} "
+                        f"during warm-up; treating as fatal (controller not ready)"
+                    )
+                    return False
+                contact = True
+                stop_reason = "step action timed out (controller cannot reach commanded)"
+                self.get_logger().info(
+                    f"[{label}] contact detected after step {step_count} "
+                    f"(reason: {stop_reason}); cmd={commanded:.3f}"
                 )
-                return False
+                break
             if settle > 0.0:
                 time.sleep(settle)
             actual = self._get_joint_position("grip_joint")
@@ -1718,8 +1733,8 @@ class GeminiPickPlaceExecutor(Node):
             # transient lag (delta low / err high) than any later free-motion
             # step. Without this guard the loop reads first-step settling as
             # contact and quits before getting anywhere near the object.
-            stalled_by_movement = step_count > 1 and movement < move_thresh
-            stalled_by_error = step_count > 1 and position_error > err_thresh
+            stalled_by_movement = step_count > 1 and movement <= move_thresh
+            stalled_by_error = step_count > 1 and position_error >= err_thresh
             if stalled_by_movement or stalled_by_error:
                 contact = True
                 stop_reason = (

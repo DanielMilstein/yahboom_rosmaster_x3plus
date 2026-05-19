@@ -25,11 +25,12 @@ FORWARDED_PARAMS = [
     ("close_grip_step_size_rad", "0.05"),
     ("close_grip_settle_time_s", "0.3"),
     # Free-motion `err` ranges from ~0.003 (quiet runs) to ~0.014 (noisy
-    # runs with Gazebo load); real contact pushes it past 0.025. The
-    # movement signal is more stable — `delta` drops cleanly below 0.040
-    # on contact. Step 1 is exempt from both stall checks (rest-state
-    # acceleration transient).
-    ("close_grip_position_error_threshold_rad", "0.025"),
+    # runs with Gazebo load); real contact onset reads ~0.018-0.019.
+    # 0.018 catches the typical onset with a ~1.5x margin above noise.
+    # The mid-loop step-action-timeout backstop in the step loop catches
+    # any gradual / soft contact where `err` plateaus below this without
+    # crossing — so this threshold can stay sane without missing contact.
+    ("close_grip_position_error_threshold_rad", "0.018"),
     ("close_grip_movement_threshold_rad", "0.040"),
     ("close_grip_extra_grip_step_rad", "0.03"),
     ("close_grip_hold_position_offset_rad", "0.0"),
