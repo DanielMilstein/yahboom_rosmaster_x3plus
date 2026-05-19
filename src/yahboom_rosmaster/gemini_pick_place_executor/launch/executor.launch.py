@@ -25,9 +25,11 @@ FORWARDED_PARAMS = [
     ("close_grip_step_size_rad", "0.05"),
     ("close_grip_settle_time_s", "0.3"),
     # Calibrated to free-motion noise: delta~0.050 / err~0.003 normally;
-    # first contact has delta<0.04 and err>0.010. Either signal trips
-    # contact (OR semantics in the step loop).
-    ("close_grip_position_error_threshold_rad", "0.010"),
+    # first contact has delta<0.04 and err>0.015. Either signal trips
+    # contact (OR semantics in the step loop). The step loop also skips
+    # both stall checks on step 1 to ignore the first-step acceleration
+    # transient (err~0.012 from rest), so 0.015 is a safe headroom value.
+    ("close_grip_position_error_threshold_rad", "0.015"),
     ("close_grip_movement_threshold_rad", "0.040"),
     ("close_grip_extra_grip_step_rad", "0.03"),
     ("close_grip_hold_position_offset_rad", "0.0"),

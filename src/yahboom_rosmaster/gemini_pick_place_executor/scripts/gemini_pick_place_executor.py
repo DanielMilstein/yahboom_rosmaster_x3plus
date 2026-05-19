@@ -207,10 +207,10 @@ class GeminiPickPlaceExecutor(Node):
         self.declare_parameter("close_grip_settle_time_s", 0.10)
         # Calibrated against observed close-loop telemetry: in free motion,
         # `delta` sits at ~0.05 and `err` at ~0.003. At first contact `delta`
-        # drops below 0.04 and `err` rises past 0.010. The thresholds below
-        # cleanly separate the two regimes — and either signal alone fires
-        # contact (OR logic in the step loop).
-        self.declare_parameter("close_grip_position_error_threshold_rad", 0.010)
+        # drops below 0.04 and `err` rises past ~0.016. The thresholds below
+        # cleanly separate the two regimes; the step loop also skips both
+        # checks on step 1 because the joint is still accelerating from rest.
+        self.declare_parameter("close_grip_position_error_threshold_rad", 0.015)
         self.declare_parameter("close_grip_movement_threshold_rad", 0.040)
         self.declare_parameter("close_grip_extra_grip_step_rad", 0.06)
         self.declare_parameter("close_grip_hold_position_offset_rad", 0.0)
@@ -1711,8 +1711,13 @@ class GeminiPickPlaceExecutor(Node):
                 f"actual={actual:.3f} delta={movement:.3f} err={position_error:.3f} "
                 f"contact=False"
             )
+            # Both stall checks skip step 1 — the joint is accelerating from
+            # a standstill at the open limit, so the first step has a larger
+            # transient lag (delta low / err high) than any later free-motion
+            # step. Without this guard the loop reads first-step settling as
+            # contact and quits before getting anywhere near the object.
             stalled_by_movement = step_count > 1 and movement < move_thresh
-            stalled_by_error = position_error > err_thresh
+            stalled_by_error = step_count > 1 and position_error > err_thresh
             if stalled_by_movement or stalled_by_error:
                 contact = True
                 stop_reason = (
