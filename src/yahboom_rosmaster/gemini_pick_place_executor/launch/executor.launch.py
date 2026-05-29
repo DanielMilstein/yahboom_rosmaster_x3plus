@@ -2,7 +2,7 @@ import os
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument
+from launch.actions import DeclareLaunchArgument, OpaqueFunction
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 from moveit_configs_utils import MoveItConfigsBuilder
@@ -77,8 +77,11 @@ FORWARDED_PARAMS = [
 ]
 
 
-def generate_launch_description():
-    use_sim_time = LaunchConfiguration("use_sim_time")
+def _launch_setup(context, *args, **kwargs):
+    # MoveItConfigsBuilder reads the xacro at launch-evaluation time, so the
+    # `use_gazebo` mapping has to be a resolved string here — not a deferred
+    # LaunchConfiguration. Resolve against the launch context before building.
+    use_gazebo = LaunchConfiguration("use_gazebo").perform(context)
 
     moveit_cpp_yaml = os.path.join(
         get_package_share_directory("gemini_pick_place_executor"),
@@ -91,7 +94,7 @@ def generate_launch_description():
         .robot_description(
             mappings={
                 "robot_name": "rosmaster_x3_plus",
-                "use_gazebo": "true",
+                "use_gazebo": use_gazebo,
             }
         )
         .moveit_cpp(file_path=moveit_cpp_yaml)
@@ -107,14 +110,23 @@ def generate_launch_description():
         output="screen",
         parameters=[
             moveit_config.to_dict(),
-            {"use_sim_time": use_sim_time, **forwarded},
+            {"use_sim_time": LaunchConfiguration("use_sim_time"), **forwarded},
         ],
     )
+    return [executor_node]
 
-    declares = [DeclareLaunchArgument("use_sim_time", default_value="true")]
+
+def generate_launch_description():
+    declares = [
+        DeclareLaunchArgument("use_sim_time", default_value="true"),
+        # Defaults preserve simulation behavior. On real hardware, launch with
+        # `use_gazebo:=false use_sim_time:=false`. `use_gazebo` controls the
+        # ros2_control plugin selection inside the URDF xacro.
+        DeclareLaunchArgument("use_gazebo", default_value="true"),
+    ]
     declares += [
         DeclareLaunchArgument(name, default_value=default)
         for name, default in FORWARDED_PARAMS
     ]
 
-    return LaunchDescription(declares + [executor_node])
+    return LaunchDescription(declares + [OpaqueFunction(function=_launch_setup)])
