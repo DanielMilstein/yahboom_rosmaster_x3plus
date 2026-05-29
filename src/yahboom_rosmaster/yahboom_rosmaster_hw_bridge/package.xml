@@ -1,0 +1,25 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>yahboom_rosmaster_hw_bridge</name>
+  <version>0.0.0</version>
+  <description>Pragmatic ROS 2 hardware bridge for the Yahboom ROSMaster X3 Plus. Wraps the stock Rosmaster_Lib Python serial driver in FollowJointTrajectory action servers, a /joint_states publisher, and a cmd_vel/odom base driver. Targets the same MoveIt + perception pipeline that drives the Gazebo simulation, with no ros2_control plugin underneath.</description>
+  <maintainer email="dnmilstein@miuandes.cl">Daniel Milstein</maintainer>
+  <license>BSD-3-Clause</license>
+
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>control_msgs</exec_depend>
+  <exec_depend>geometry_msgs</exec_depend>
+  <exec_depend>nav_msgs</exec_depend>
+  <exec_depend>sensor_msgs</exec_depend>
+  <exec_depend>std_msgs</exec_depend>
+  <exec_depend>trajectory_msgs</exec_depend>
+  <exec_depend>tf2_ros</exec_depend>
+
+  <test_depend>ament_lint_auto</test_depend>
+  <test_depend>ament_lint_common</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

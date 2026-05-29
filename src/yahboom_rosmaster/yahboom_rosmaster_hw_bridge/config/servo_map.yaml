@@ -1,0 +1,48 @@
+# Yahboom ROSMaster X3 Plus servo ID map.
+#
+# Phase 0: placeholder values. Real IDs must be filled in during Phase 1
+# from Yahboom's documentation or by probing on the Orin (Rosmaster_Lib
+# uses servo IDs 1..N; the X3 Plus arm convention is typically id=1 at
+# the base joint and increasing distally, with the gripper at id=6).
+#
+# Each joint maps to:
+#   id:           UART servo ID on the STM32 bus
+#   open_rad:     joint value (rad) corresponding to servo_angle=0 deg
+#   close_rad:    joint value (rad) corresponding to servo_angle=180 deg
+#   invert:       reverse the mapping direction (true/false)
+#
+# The arm_action_server and gripper_action_server will linearly remap
+# trajectory points in radians to the servo's 0–180 deg range using
+# these limits.
+
+joints:
+  arm_joint1:
+    id: 1
+    open_rad: -1.5708
+    close_rad: 1.5708
+    invert: false
+  arm_joint2:
+    id: 2
+    open_rad: -1.5708
+    close_rad: 1.5708
+    invert: false
+  arm_joint3:
+    id: 3
+    open_rad: -1.5708
+    close_rad: 1.5708
+    invert: false
+  arm_joint4:
+    id: 4
+    open_rad: -1.5708
+    close_rad: 1.5708
+    invert: false
+  arm_joint5:
+    id: 5
+    open_rad: -1.5708
+    close_rad: 1.5708
+    invert: false
+  grip_joint:
+    id: 6
+    open_rad: -1.54
+    close_rad: 0.0
+    invert: false
