@@ -1,0 +1,3 @@
+[submodule "src/yahboom_rosmaster/OrbbecSDK_ROS2"]
+	path = src/yahboom_rosmaster/OrbbecSDK_ROS2
+	url = https://github.com/orbbec/OrbbecSDK_ROS2.git
