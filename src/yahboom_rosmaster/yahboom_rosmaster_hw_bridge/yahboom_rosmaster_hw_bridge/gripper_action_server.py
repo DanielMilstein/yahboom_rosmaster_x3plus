@@ -1,8 +1,9 @@
 """FollowJointTrajectory action server for the X3 Plus 1-DOF gripper.
 
-Phase 0 stub mirroring arm_action_server. Phase 2 wires the close loop
-to Rosmaster_Lib.set_uart_servo_angle() and re-tunes the contact
-thresholds against the real servo (Phase 4).
+Phase 1 stub mirroring arm_action_server. Does not open the serial port
+(base_driver owns it). Phase 2 wires the close loop to
+Rosmaster_Lib.set_uart_servo_angle() inside the consolidated
+yahboom_bridge_node, and Phase 4 re-tunes the contact thresholds.
 """
 from __future__ import annotations
 
@@ -11,8 +12,6 @@ from control_msgs.action import FollowJointTrajectory
 from rclpy.action import ActionServer, GoalResponse, CancelResponse
 from rclpy.node import Node
 
-from ._rosmaster_lib import acquire_driver
-
 
 class GripperActionServer(Node):
     def __init__(self) -> None:
@@ -20,14 +19,11 @@ class GripperActionServer(Node):
         self.declare_parameter(
             "action_name", "/gripper_controller/follow_joint_trajectory"
         )
+        # serial_* params accepted for launch parity; unused in Phase 1.
         self.declare_parameter("serial_port", "/dev/myserial")
         self.declare_parameter("serial_baud", 115200)
 
         action_name = self.get_parameter("action_name").value
-        self._driver = acquire_driver(
-            self.get_parameter("serial_port").value,
-            int(self.get_parameter("serial_baud").value),
-        )
         self._server = ActionServer(
             self,
             FollowJointTrajectory,
@@ -36,18 +32,13 @@ class GripperActionServer(Node):
             goal_callback=self._goal_callback,
             cancel_callback=lambda _g: CancelResponse.ACCEPT,
         )
-        if self._driver is None:
-            self.get_logger().warn(
-                f"[gripper] up on '{action_name}' in stub mode (no Rosmaster_Lib)"
-            )
-        else:
-            self.get_logger().info(f"[gripper] up on '{action_name}' with live driver")
+        self.get_logger().warn(
+            f"[gripper] up on '{action_name}' (stub — Phase 1, all goals rejected)"
+        )
 
     def _goal_callback(self, _goal_request) -> GoalResponse:
-        if self._driver is None:
-            self.get_logger().warn("[gripper] rejecting goal: stub mode")
-            return GoalResponse.REJECT
-        return GoalResponse.ACCEPT
+        self.get_logger().warn("[gripper] rejecting goal: stub mode (Phase 1)")
+        return GoalResponse.REJECT
 
     async def _execute(self, goal_handle):
         self.get_logger().error("[gripper] execute not implemented (Phase 2)")

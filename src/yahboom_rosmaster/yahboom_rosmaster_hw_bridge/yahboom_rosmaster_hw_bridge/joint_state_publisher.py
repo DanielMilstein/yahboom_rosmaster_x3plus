@@ -1,17 +1,18 @@
-"""15 Hz /joint_states publisher polled from Rosmaster_Lib.
+"""15 Hz /joint_states publisher.
 
-Phase 0 stub: publishes zero-position joint states for arm + gripper so
+Phase 1 stub: publishes zero-position joint states for arm + gripper so
 that downstream consumers (rviz, perception bridge tf lookups) can start
-up without errors during integration testing. Phase 1/2 swap the zeros
-for actual servo readbacks.
+up without errors. Stays in stub mode through Phase 1 because base_driver
+holds /dev/myserial open and Rosmaster_Lib can't be safely opened a
+second time. Phase 2 consolidates everything into a single bridge node
+that shares one serial connection; at that point this becomes a real
+servo readback at 15 Hz.
 """
 from __future__ import annotations
 
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import JointState
-
-from ._rosmaster_lib import acquire_driver
 
 
 DEFAULT_JOINTS = (
@@ -29,26 +30,24 @@ class JointStatePublisher(Node):
         super().__init__("hw_joint_state_publisher")
         self.declare_parameter("rate_hz", 15.0)
         self.declare_parameter("joint_names", list(DEFAULT_JOINTS))
+        # serial_port / serial_baud accepted for parity with other bridge
+        # nodes' launch params; unused in Phase 1.
         self.declare_parameter("serial_port", "/dev/myserial")
         self.declare_parameter("serial_baud", 115200)
 
-        self._driver = acquire_driver(
-            self.get_parameter("serial_port").value,
-            int(self.get_parameter("serial_baud").value),
-        )
         self._joint_names = list(self.get_parameter("joint_names").value)
         self._publisher = self.create_publisher(JointState, "/joint_states", 10)
         period = 1.0 / float(self.get_parameter("rate_hz").value)
         self._timer = self.create_timer(period, self._tick)
 
-        mode = "stub" if self._driver is None else "live"
         self.get_logger().info(
             f"[joint_state] up: {len(self._joint_names)} joints @ "
-            f"{self.get_parameter('rate_hz').value} Hz ({mode})"
+            f"{self.get_parameter('rate_hz').value} Hz (stub — Phase 1)"
         )
 
     def _tick(self) -> None:
-        # Phase 1: replace zeros with self._driver.get_uart_servo_angle(id) per joint.
+        # Phase 2: replace zeros with self._driver.get_uart_servo_angle(id) per joint,
+        # via the consolidated yahboom_bridge_node that owns serial.
         msg = JointState()
         msg.header.stamp = self.get_clock().now().to_msg()
         msg.name = self._joint_names
