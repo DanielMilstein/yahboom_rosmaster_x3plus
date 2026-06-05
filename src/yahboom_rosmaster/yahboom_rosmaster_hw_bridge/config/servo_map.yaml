@@ -18,28 +18,28 @@
 joints:
   arm_joint1:
     id: 1
-    open_rad: -1.5708
-    close_rad: 1.5708
+    open_rad: -2
+    close_rad: 2
     invert: false
   arm_joint2:
     id: 2
-    open_rad: -1.5708
-    close_rad: 1.5708
+    open_rad: -2
+    close_rad: 2
     invert: false
   arm_joint3:
     id: 3
-    open_rad: -1.5708
-    close_rad: 1.5708
+    open_rad: -2.5
+    close_rad: 2.5
     invert: false
   arm_joint4:
     id: 4
-    open_rad: -1.5708
-    close_rad: 1.5708
+    open_rad: -2.5
+    close_rad: 2.5
     invert: false
   arm_joint5:
     id: 5
-    open_rad: -1.5708
-    close_rad: 1.5708
+    open_rad: -2
+    close_rad: 3.14159
     invert: false
   grip_joint:
     id: 6
