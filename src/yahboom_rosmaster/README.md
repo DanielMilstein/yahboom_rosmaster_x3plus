@@ -143,3 +143,12 @@ attempt_1.json
 scene_<hash>.png
 gemini_overlay.png
 ```
+
+Gcode for the end gcode of the printer (Prusa XL)
+
+```gcode
+G0 Z{max(340, max_layer_z)} ; max_layer_z = [max_layer_z] / 340 -> 14cm de la mesa
+M190 R30     ; wait for bed to cool to 30C
+
+M77 ; stop print timer
+```
