@@ -1,7 +1,8 @@
 """Bring up the consolidated yahboom_bridge_node.
 
 One process owns /dev/myserial and hosts:
-- /cmd_vel → base, /odom + /imu/data_raw publishing.
+- /cmd_vel (Twist) + /cmd_vel_stamped (TwistStamped) → base,
+  /odom + /imu/data_raw publishing.
 - /joint_states from servo readbacks at 15 Hz.
 - /arm_controller/follow_joint_trajectory action server.
 - /gripper_controller/follow_joint_trajectory action server.

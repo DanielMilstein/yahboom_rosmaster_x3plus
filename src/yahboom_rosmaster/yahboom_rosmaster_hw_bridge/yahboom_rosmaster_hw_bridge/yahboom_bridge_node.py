@@ -3,7 +3,7 @@
 Holds the one Rosmaster_Lib serial connection on /dev/myserial and
 exposes:
 
-- Base teleop:        /cmd_vel -> set_car_motion()
+- Base teleop:        /cmd_vel (Twist) + /cmd_vel_stamped (TwistStamped) -> set_car_motion()
 - Odom + IMU:         /odom, /imu/data_raw, optional odom->base_footprint TF
 - Joint states:       /joint_states at 15 Hz (get_uart_servo_angle per joint)
 - Arm trajectory:     /arm_controller/follow_joint_trajectory action server
@@ -28,7 +28,7 @@ from typing import Dict, List, Optional
 import rclpy
 import yaml
 from control_msgs.action import FollowJointTrajectory
-from geometry_msgs.msg import Quaternion, TransformStamped, Twist
+from geometry_msgs.msg import Quaternion, TransformStamped, Twist, TwistStamped
 from nav_msgs.msg import Odometry
 from rclpy.action import ActionServer, CancelResponse, GoalResponse
 from rclpy.callback_groups import MutuallyExclusiveCallbackGroup, ReentrantCallbackGroup
@@ -111,8 +111,10 @@ class YahboomBridgeNode(Node):
         self.declare_parameter("serial_delay", 0.002)
         self.declare_parameter("serial_debug", False)
 
-        # Base.
+        # Base. Plain Twist on cmd_vel_topic (teleop_twist_keyboard et al.);
+        # TwistStamped on cmd_vel_stamped_topic (the pick-place executor).
         self.declare_parameter("cmd_vel_topic", "/cmd_vel")
+        self.declare_parameter("cmd_vel_stamped_topic", "/cmd_vel_stamped")
         self.declare_parameter("odom_topic", "/odom")
         self.declare_parameter("imu_topic", "/imu/data_raw")
         self.declare_parameter("base_publish_rate_hz", 30.0)
@@ -196,6 +198,13 @@ class YahboomBridgeNode(Node):
             10,
             callback_group=self._cb_base,
         )
+        self._cmd_stamped_sub = self.create_subscription(
+            TwistStamped,
+            self.get_parameter("cmd_vel_stamped_topic").value,
+            self._on_cmd_vel_stamped,
+            10,
+            callback_group=self._cb_base,
+        )
         self._odom_pub = self.create_publisher(
             Odometry, self.get_parameter("odom_topic").value, 10
         )
@@ -211,6 +220,9 @@ class YahboomBridgeNode(Node):
         self._base_timer = self.create_timer(
             period, self._publish_base_state, callback_group=self._cb_base
         )
+
+    def _on_cmd_vel_stamped(self, msg: TwistStamped) -> None:
+        self._on_cmd_vel(msg.twist)
 
     def _on_cmd_vel(self, msg: Twist) -> None:
         if self._driver is None:

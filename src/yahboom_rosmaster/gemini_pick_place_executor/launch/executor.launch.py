@@ -103,6 +103,21 @@ def _launch_setup(context, *args, **kwargs):
 
     forwarded = {name: LaunchConfiguration(name) for name, _ in FORWARDED_PARAMS}
 
+    # Base-drive endpoints differ per backend: the Gazebo path drives the
+    # ros2_control mecanum controller (TwistStamped), the hardware path
+    # drives yahboom_bridge_node, which accepts TwistStamped on
+    # /cmd_vel_stamped and publishes integrated odometry on /odom.
+    if use_gazebo.lower() in ("true", "1"):
+        drive_topics = {
+            "cmd_vel_topic": "mecanum_drive_controller/cmd_vel",
+            "odom_topic": "mecanum_drive_controller/odom",
+        }
+    else:
+        drive_topics = {
+            "cmd_vel_topic": "/cmd_vel_stamped",
+            "odom_topic": "/odom",
+        }
+
     executor_node = Node(
         package="gemini_pick_place_executor",
         executable="gemini_pick_place_executor.py",
@@ -110,7 +125,7 @@ def _launch_setup(context, *args, **kwargs):
         output="screen",
         parameters=[
             moveit_config.to_dict(),
-            {"use_sim_time": LaunchConfiguration("use_sim_time"), **forwarded},
+            {"use_sim_time": LaunchConfiguration("use_sim_time"), **drive_topics, **forwarded},
         ],
     )
     return [executor_node]
