@@ -213,6 +213,12 @@ ros2 launch gemini_pick_place_executor executor.launch.py \
 
 **Safety gates:** `enable_arm_execution` and `enable_gripper_execution` default to **false** — the bridge rejects trajectory goals until you pass them as true (or `ros2 param set` at runtime). Bring the stack up gated first, confirm `/joint_states` tracks the physical arm (flex a joint by hand), then enable.
 
+**Folded-arm pre-step:** the arm physically rests folded against the chassis when powered down, and MoveIt refuses to plan from that in-collision state. Before the first run after power-up, raise it (moves blindly over 5 s — watch the arm):
+
+```bash
+ros2 run yahboom_rosmaster_hw_bridge raise_arm
+```
+
 **Recommended first run:** `execute:=false` (perception-only dry run). Verify the debug markers in RViz land where the physical objects are before allowing motion.
 
 ### 5.4 Verifying each layer independently
@@ -267,6 +273,8 @@ Things that will bite an integrator who doesn't know them:
 | Executor dies with `No module named 'moveit'` | moveit_py not installed on this machine — `docs/BUILD-moveit-py-orin.md` (only needed for `execute:=true`). |
 | Executor never starts | Is an image arriving on `/perception_bridge/debug_image`? (`auto_start` waits for the first frame.) |
 | `/joint_states` all zeros | `servo_map_path` wrong/empty, or serial reads failing — check bridge logs; bridge falls back to 0.0 placeholders. |
+| `/joint_states` frozen + bridge logs `firmware version: -1` | `/dev/myserial` udev symlink drifted to the wrong USB-serial adapter (it matches by port position; replugs/reboots can shuffle it). Probe each `/dev/ttyUSB*` with Rosmaster_Lib `get_version()` (the STM32 answers `3.5`), then relaunch with `serial_port:=/dev/ttyUSBx` or replug into the original port. A drift-proof udev rule needs a unique device attribute — check `udevadm info -a /dev/ttyUSBx`; CH340 chips often have no serial number. |
+| `Start state appears to be in collision` at the stow/first plan | The arm is physically folded against the chassis (its power-off rest). Run `ros2 run yahboom_rosmaster_hw_bridge raise_arm` first. If the arm is visibly upright instead, the servo_map anchors are wrong — recalibrate. |
 | Projected points offset from reality | Camera URDF pose (§7.5), then depth registration (`depth_registration:=true` must be on). |
 | Arm goals rejected | `enable_arm_execution` still false, or bridge in stub mode (no serial). |
 | Gemini service errors | `GEMINI_API_KEY` unset, quota exhausted (check `log_path` in the response), or no network. |

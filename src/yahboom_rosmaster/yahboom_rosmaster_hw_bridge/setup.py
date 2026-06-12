@@ -27,6 +27,7 @@ setup(
     entry_points={
         "console_scripts": [
             f"yahboom_bridge_node = {PACKAGE_NAME}.yahboom_bridge_node:main",
+            f"raise_arm = {PACKAGE_NAME}.raise_arm:main",
         ],
     },
 )

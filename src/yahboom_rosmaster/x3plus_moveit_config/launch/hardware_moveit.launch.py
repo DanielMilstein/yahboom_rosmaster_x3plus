@@ -35,6 +35,7 @@ def generate_launch_description() -> LaunchDescription:
     enable_arm_execution = LaunchConfiguration("enable_arm_execution")
     enable_gripper_execution = LaunchConfiguration("enable_gripper_execution")
     car_type = LaunchConfiguration("car_type")
+    serial_port = LaunchConfiguration("serial_port")
 
     moveit_pkg = FindPackageShare("x3plus_moveit_config")
     hw_bridge_pkg = FindPackageShare("yahboom_rosmaster_hw_bridge")
@@ -68,6 +69,7 @@ def generate_launch_description() -> LaunchDescription:
             ("enable_arm_execution", enable_arm_execution),
             ("enable_gripper_execution", enable_gripper_execution),
             ("car_type", car_type),
+            ("serial_port", serial_port),
         ],
     )
 
@@ -158,6 +160,12 @@ def generate_launch_description() -> LaunchDescription:
                 description="Gate gripper execution. Flip to true after grip_joint calibration.",
             ),
             DeclareLaunchArgument("car_type", default_value="1"),
+            DeclareLaunchArgument(
+                "serial_port",
+                default_value="/dev/myserial",
+                description="STM32 serial device. Override (e.g. /dev/ttyUSB2) if the "
+                "myserial udev symlink drifts after a replug.",
+            ),
             robot_state_publisher,
             hw_bridge_launch,
             camera_launch,
