@@ -10,6 +10,8 @@ from moveit_configs_utils import MoveItConfigsBuilder
 
 FORWARDED_PARAMS = [
     ("execute", "false"),
+    ("ik_probe", "false"),
+    ("ik_probe_z", "0.166"),
     ("task", "put the red can in the blue bin"),
     ("pick_lift_m", "0.06"),
     ("place_lift_m", "0.06"),

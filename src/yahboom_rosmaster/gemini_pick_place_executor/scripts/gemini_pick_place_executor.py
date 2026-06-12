@@ -133,6 +133,11 @@ class GeminiPickPlaceExecutor(Node):
         self.declare_parameter("base_point_topic", "/perception_bridge/selected_point_base")
         self.declare_parameter("marker_topic", "/gemini_pick_place/debug_markers")
         self.declare_parameter("auto_start", True)
+        # Diagnostic mode: instead of the pick-place flow, scan fx (fy=0) at
+        # ik_probe_z against all orientation candidates and log which solve
+        # IK. Maps the 5-DOF arm's KDL feasibility boundary on real config.
+        self.declare_parameter("ik_probe", False)
+        self.declare_parameter("ik_probe_z", 0.166)
         self.declare_parameter("project_timeout_sec", 3.0)
         self.declare_parameter("service_timeout_sec", 10.0)
         self.declare_parameter("pick_lift_m", 0.06)
@@ -374,6 +379,15 @@ class GeminiPickPlaceExecutor(Node):
         return float(msg.position[idx])
 
     def maybe_start(self):
+        if bool(self.get_parameter("ik_probe").value):
+            if self.worker_started or self.moveit is None:
+                return
+            with self.worker_lock:
+                if self.worker_started:
+                    return
+                self.worker_started = True
+            threading.Thread(target=self.run_ik_probe, daemon=True).start()
+            return
         if not bool(self.get_parameter("auto_start").value):
             return
         if self.worker_started or self.latest_image is None:
@@ -383,6 +397,46 @@ class GeminiPickPlaceExecutor(Node):
                 return
             self.worker_started = True
         threading.Thread(target=self.run_once, daemon=True).start()
+
+    def run_ik_probe(self):
+        """Scan fx (fy=0, z=ik_probe_z) against every orientation candidate and
+        log which combinations solve IK — the arm's real feasibility map."""
+        from moveit.core.robot_state import RobotState
+        from geometry_msgs.msg import Pose
+
+        arm_name = str(self.get_parameter("arm_group_name").value)
+        ee_link = str(self.get_parameter("end_effector_link").value)
+        timeout = float(self.get_parameter("ik_search_timeout_sec").value)
+        robot_model = self.moveit.get_robot_model()
+        tip_offset = [float(v) for v in self.get_parameter("gripper_tip_offset_xyz").value]
+        z = float(self.get_parameter("ik_probe_z").value)
+
+        self.get_logger().info(
+            f"IK probe: fy=0 z={z:.3f} tip_offset={tip_offset} "
+            "orient 0=top-down, 1..5=tilt 0.4/0.8/1.2/1.4/1.57 rad "
+            "('!col' = IK ok but in collision)"
+        )
+        fx = 0.14
+        while fx <= 0.421:
+            solved = []
+            for orient_idx, (qx, qy, qz, qw) in enumerate(self.candidate_orientations(fx, 0.0)):
+                ox, oy, oz = rotate_vector_by_quat(tip_offset, qx, qy, qz, qw)
+                pose = Pose()
+                pose.position.x = fx - ox
+                pose.position.y = -oy
+                pose.position.z = z - oz
+                pose.orientation.x = qx
+                pose.orientation.y = qy
+                pose.orientation.z = qz
+                pose.orientation.w = qw
+                state = RobotState(robot_model)
+                state.update()
+                if state.set_from_ik(arm_name, pose, ee_link, timeout):
+                    tag = "" if self.state_is_collision_free(state) else "!col"
+                    solved.append(f"{orient_idx}{tag}")
+            self.get_logger().info(f"IK probe fx={fx:.2f}: solved=[{','.join(solved) or 'none'}]")
+            fx += 0.02
+        self.get_logger().info("IK probe complete (no motion was commanded).")
 
     def run_once(self):
         execute = bool(self.get_parameter("execute").value)
