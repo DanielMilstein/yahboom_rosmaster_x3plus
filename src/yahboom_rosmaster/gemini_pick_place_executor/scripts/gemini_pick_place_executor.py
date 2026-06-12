@@ -947,7 +947,10 @@ class GeminiPickPlaceExecutor(Node):
         # qy = cos(R/2)sin(P/2)cos(Y/2) + sin(R/2)cos(P/2)sin(Y/2) = cd*sy
         # qz = cos(R/2)cos(P/2)sin(Y/2) - sin(R/2)sin(P/2)cos(Y/2) = -(-sd)*cy = sd*cy
         # (with P = -delta, so sin(P/2) = -sd, cos(P/2) = cd)
-        for delta_rad in (0.4, 0.8, 1.2, 1.4):  # ~23, 46, 69, 80 deg from top-down
+        # 1.57 (fully horizontal) is the reach-extending pose for far targets:
+        # a 5-DOF arm at full forward extension often has no exact IK solution
+        # for near-vertical gripper poses, but does for a horizontal approach.
+        for delta_rad in (0.4, 0.8, 1.2, 1.4, 1.57):  # ~23, 46, 69, 80, 90 deg from top-down
             cd = math.cos(delta_rad / 2.0)
             sd = math.sin(delta_rad / 2.0)
             qw = -sd * sy
@@ -1282,6 +1285,8 @@ class GeminiPickPlaceExecutor(Node):
         fy_world = float(point.point.y)
         z_world = float(point.point.z)
 
+        ik_fails = 0
+        collision_fails = 0
         for cand_idx, (dx, dy) in enumerate(candidates):
             fx = fx_world - dx
             fy = fy_world - dy
@@ -1309,9 +1314,11 @@ class GeminiPickPlaceExecutor(Node):
                     if not state.set_from_ik(
                         arm_name, attempt_pose, ee_link, timeout
                     ):
+                        ik_fails += 1
                         all_lifts_ok = False
                         break
                     if not self.state_is_collision_free(state):
+                        collision_fails += 1
                         all_lifts_ok = False
                         break
                 if all_lifts_ok:
@@ -1324,7 +1331,8 @@ class GeminiPickPlaceExecutor(Node):
         self.get_logger().warn(
             f"find_feasible_drive: no feasible offset in {len(candidates)} candidates "
             f"(point=({fx_world:.3f},{fy_world:.3f},{z_world:.3f}), "
-            f"lifts={[round(l, 3) for l in lifts]})"
+            f"lifts={[round(l, 3) for l in lifts]}; "
+            f"rejections: ik={ik_fails} collision={collision_fails})"
         )
         return None
 
