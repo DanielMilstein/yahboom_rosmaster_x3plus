@@ -118,6 +118,10 @@ class YahboomBridgeNode(Node):
         self.declare_parameter("odom_topic", "/odom")
         self.declare_parameter("imu_topic", "/imu/data_raw")
         self.declare_parameter("base_publish_rate_hz", 30.0)
+        # Deadman: the STM32 holds the last velocity forever, so if a
+        # commander dies mid-drive the robot runs away. Stop the motors if
+        # no cmd_vel arrives for this long. 0 disables.
+        self.declare_parameter("cmd_vel_watchdog_s", 1.0)
         self.declare_parameter("publish_odom_tf", True)
         self.declare_parameter("odom_frame", "odom")
         self.declare_parameter("base_frame", "base_footprint")
@@ -226,6 +230,25 @@ class YahboomBridgeNode(Node):
         self._base_timer = self.create_timer(
             period, self._publish_base_state, callback_group=self._cb_base
         )
+        self._last_cmd_time: Optional[float] = None
+        self._watchdog_stopped = True
+        wd = float(self.get_parameter("cmd_vel_watchdog_s").value)
+        if wd > 0.0:
+            self._cmd_watchdog_timer = self.create_timer(
+                min(0.2, wd / 2.0), self._cmd_watchdog, callback_group=self._cb_commands
+            )
+
+    def _cmd_watchdog(self) -> None:
+        if self._watchdog_stopped or self._last_cmd_time is None:
+            return
+        wd = float(self.get_parameter("cmd_vel_watchdog_s").value)
+        now = self.get_clock().now().nanoseconds * 1e-9
+        if now - self._last_cmd_time > wd:
+            self.get_logger().warn(
+                f"[base] no cmd_vel for {wd:.1f}s — watchdog stopping motors"
+            )
+            self._watchdog_stopped = True
+            self.stop_motors()
 
     def _on_cmd_vel_stamped(self, msg: TwistStamped) -> None:
         self._on_cmd_vel(msg.twist)
@@ -233,6 +256,8 @@ class YahboomBridgeNode(Node):
     def _on_cmd_vel(self, msg: Twist) -> None:
         if self._driver is None:
             return
+        self._last_cmd_time = self.get_clock().now().nanoseconds * 1e-9
+        self._watchdog_stopped = False
         try:
             with self._serial_lock:
                 self._driver.set_car_motion(
