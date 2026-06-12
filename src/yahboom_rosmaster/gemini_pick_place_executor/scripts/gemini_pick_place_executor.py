@@ -1327,7 +1327,12 @@ class GeminiPickPlaceExecutor(Node):
             if hi < lo:
                 return [0.0]
             n = int(math.floor((hi - lo) / step)) + 1
-            return [lo + i * step for i in range(n)]
+            vals = [lo + i * step for i in range(n)]
+            # Always include the range endpoint: with a tight drive envelope
+            # the last few cm are often exactly the ones that make IK feasible.
+            if vals[-1] < hi - 1e-9:
+                vals.append(hi)
+            return vals
 
         if axes_mode == "y_only":
             dx_values = [0.0]
