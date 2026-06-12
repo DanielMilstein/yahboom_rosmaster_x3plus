@@ -151,6 +151,7 @@ It also republishes the RGB stream on `/perception_bridge/debug_image` (this is 
 - **`GEMINI_API_KEY`** — required by `gemini_robotics_bridge`. Optional `GEMINI_API_KEY_2`, `GEMINI_API_KEY_3` enable automatic key rotation on quota errors.
 - Internet access from wherever `gemini_robotics_bridge` runs (it's the only networked component — it can run on a different machine than the robot if they share a ROS domain).
 - Python deps: `src/yahboom_rosmaster/gemini_robotics_bridge/requirements-gemini.txt` (Google GenAI SDK).
+- **moveit_py** (the MoveIt 2 Python bindings) on whichever machine runs the executor with `execute:=true`. Not available as a Humble binary — it requires a from-source MoveIt build. See `docs/BUILD-moveit-py-orin.md` for the recipe (written for the Jetson, applies to any Humble machine). Dry runs (`execute:=false`) don't need it.
 - Hardware only: `Rosmaster_Lib` v3.3.9 (ships preinstalled on the Yahboom Jetson image) and the Yahboom udev rule that symlinks the STM32 as `/dev/myserial`.
 
 ### 4.6 Retargeting the task
@@ -179,6 +180,8 @@ export GEMINI_API_KEY="..."
 ```
 
 (`--base-paths src` keeps colcon from scanning a workspace-local venv.)
+
+For motion execution (`execute:=true`) the machine also needs a from-source MoveIt build providing moveit_py, sourced as an underlay before this workspace — see `docs/BUILD-moveit-py-orin.md`.
 
 ### 5.2 Simulation
 
@@ -249,7 +252,7 @@ Things that will bite an integrator who doesn't know them:
 3. **Odometry is relative.** "Return to origin" means the odom pose captured at run start. Restarting the bridge zeroes the integrator. There is no map frame, no localization, no absolute anchor.
 4. **Camera depth floor ≈ 0.6 m.** The Astra Pro+ returns invalid depth (0.0) closer than that. Objects must sit in the 0.6 m+ band; `perception_bridge` searches a small radius around the requested pixel for valid depth but cannot conjure depth that isn't there.
 5. **Camera pose comes from the URDF.** The `astra_joint` origin in `yahboom_rosmaster_description/urdf/robots/rosmaster_x3_plus.urdf.xacro` must match the physical mount (currently 19° downward pitch). If projections are systematically offset, this transform is the first suspect. There is no hand-eye calibration step.
-6. **The collision scene is minimal.** `publish_tabletop_scene.py` publishes one hardcoded table box. MoveIt does not know about the robot's own chassis or anything else in the room — keep clutter out of the arm's envelope.
+6. **The collision scene is minimal, and the octomap is deliberately disabled.** `publish_tabletop_scene.py` publishes one hardcoded table box; MoveIt does not know about the robot's own chassis or anything else in the room — keep clutter out of the arm's envelope. The depth-camera octomap updater (`sensors_3d.yaml`) is pointed at a dead topic on purpose: a live octomap voxelizes the pick target itself and MoveIt then rejects grasp plans as in-collision. Don't "fix" it without also solving target-region clearing and gripper-linkage self-filtering (see the comment in that file).
 7. **Gemini is a runtime dependency.** Every run makes 1–2+ API calls (pick + verify per attempt). Expect seconds of latency per call, quota limits (key rotation helps), and nondeterminism — the same scene can yield slightly different pixels run to run. All prompts/responses are logged to disk (`log_dir`) for postmortems.
 8. **Trajectory timing on hardware is approximate.** The bridge executes waypoints over serial sequentially and can run slower than the planned trajectory. If MoveIt aborts with execution-duration complaints, raise `trajectory_execution.allowed_execution_duration_scaling` in `hardware_moveit.launch.py`.
 9. **Out-of-range servo commands clamp silently** to the servo's 0–180° span. A plan that exceeds `servo_map.yaml` range stops short physically; the symptom is the *next* plan failing its start-state tolerance check.
@@ -261,6 +264,7 @@ Things that will bite an integrator who doesn't know them:
 
 | Symptom | First place to look |
 |---|---|
+| Executor dies with `No module named 'moveit'` | moveit_py not installed on this machine — `docs/BUILD-moveit-py-orin.md` (only needed for `execute:=true`). |
 | Executor never starts | Is an image arriving on `/perception_bridge/debug_image`? (`auto_start` waits for the first frame.) |
 | `/joint_states` all zeros | `servo_map_path` wrong/empty, or serial reads failing — check bridge logs; bridge falls back to 0.0 placeholders. |
 | Projected points offset from reality | Camera URDF pose (§7.5), then depth registration (`depth_registration:=true` must be on). |

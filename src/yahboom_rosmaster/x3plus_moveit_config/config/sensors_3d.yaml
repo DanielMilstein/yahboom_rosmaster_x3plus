@@ -2,7 +2,13 @@ sensors:
   - depth_camera_pointcloud
 depth_camera_pointcloud:
   sensor_plugin: occupancy_map_monitor/PointCloudOctomapUpdater
-  point_cloud_topic: /camera/depth/points
+  # Deliberately dead topic: the pick pipeline was validated with the octomap
+  # idle (sim cameras publish under /cam_1/..., so this updater never fired).
+  # On hardware /camera/depth/points exists, and a live octomap voxelizes the
+  # pick target itself, making MoveIt reject grasp plans as in-collision.
+  # To re-enable octomap, point this at the real cloud topic AND publish the
+  # gripper-linkage mimic joints from the hw bridge so self-filtering works.
+  point_cloud_topic: /octomap_disabled/points
   max_range: 5.0
   point_subsample: 1
   padding_offset: 0.03
