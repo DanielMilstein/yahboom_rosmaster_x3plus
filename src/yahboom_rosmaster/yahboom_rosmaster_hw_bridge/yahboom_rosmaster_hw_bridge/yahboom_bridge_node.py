@@ -170,9 +170,15 @@ class YahboomBridgeNode(Node):
             except Exception as exc:  # noqa: BLE001
                 self.get_logger().warn(f"[bridge] get_version raised: {exc}")
 
-        # Callback groups: base + joint state on one MutEx, action servers reentrant
-        # so they can be preempted / run alongside the readback timer.
+        # Callback groups: command subscriptions, the odom timer, and the
+        # joint-state poller each get their OWN MutEx group. The joint poller
+        # does six serial round-trips per pass and permanently overruns its
+        # 15 Hz period — sharing its group starves whatever else is in it
+        # (this silently ate every /cmd_vel message when they were grouped).
+        # The serial lock, not the callback group, arbitrates port access.
+        self._cb_commands = MutuallyExclusiveCallbackGroup()
         self._cb_base = MutuallyExclusiveCallbackGroup()
+        self._cb_joints = MutuallyExclusiveCallbackGroup()
         self._cb_actions = ReentrantCallbackGroup()
 
         self._setup_base()
@@ -196,14 +202,14 @@ class YahboomBridgeNode(Node):
             self.get_parameter("cmd_vel_topic").value,
             self._on_cmd_vel,
             10,
-            callback_group=self._cb_base,
+            callback_group=self._cb_commands,
         )
         self._cmd_stamped_sub = self.create_subscription(
             TwistStamped,
             self.get_parameter("cmd_vel_stamped_topic").value,
             self._on_cmd_vel_stamped,
             10,
-            callback_group=self._cb_base,
+            callback_group=self._cb_commands,
         )
         self._odom_pub = self.create_publisher(
             Odometry, self.get_parameter("odom_topic").value, 10
@@ -329,7 +335,7 @@ class YahboomBridgeNode(Node):
         if rate > 0.0:
             period = 1.0 / rate
             self._joint_state_timer = self.create_timer(
-                period, self._publish_joint_states, callback_group=self._cb_base
+                period, self._publish_joint_states, callback_group=self._cb_joints
             )
 
     def _publish_joint_states(self) -> None:
