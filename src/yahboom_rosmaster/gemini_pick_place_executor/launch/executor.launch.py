@@ -48,6 +48,10 @@ FORWARDED_PARAMS = [
     ("use_orientation_constraint", "true"),
     ("ik_timeout_sec", "4.0"),
     ("enable_base_drive", "true"),
+    # y_only matches the sim scene (can placed at sweet_x, only lateral
+    # correction needed). On hardware pass drive_axes:=xy — the Astra's
+    # 0.6 m minimum depth range forces perceiving from afar and driving
+    # forward to bring the target into the arm's reach.
     ("drive_axes", "y_only"),
     ("base_search_dx_range_m", "[0.0, 0.17]"),
     ("base_search_dy_range_m", "[-0.28, 0.23]"),

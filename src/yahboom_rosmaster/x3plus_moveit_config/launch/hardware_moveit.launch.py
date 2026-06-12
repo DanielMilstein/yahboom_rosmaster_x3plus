@@ -32,6 +32,7 @@ from moveit_configs_utils import MoveItConfigsBuilder
 def generate_launch_description() -> LaunchDescription:
     use_sim_time = LaunchConfiguration("use_sim_time")
     moveit_rviz = LaunchConfiguration("moveit_rviz")
+    tabletop_scene = LaunchConfiguration("tabletop_scene")
     enable_arm_execution = LaunchConfiguration("enable_arm_execution")
     enable_gripper_execution = LaunchConfiguration("enable_gripper_execution")
     car_type = LaunchConfiguration("car_type")
@@ -106,11 +107,16 @@ def generate_launch_description() -> LaunchDescription:
         ],
     )
 
+    # publish_tabletop_scene.py publishes the SIM scene (table slab, can,
+    # bin walls) as collision objects pinned to base_footprint. On real
+    # hardware those props are fiction and collision-reject valid grasps,
+    # so the node is gated off by default here.
     tabletop_scene_node = Node(
         package="x3plus_moveit_config",
         executable="publish_tabletop_scene.py",
         output="screen",
         parameters=[{"use_sim_time": use_sim_time}],
+        condition=IfCondition(tabletop_scene),
     )
 
     perception_bridge_node = Node(
@@ -149,6 +155,12 @@ def generate_launch_description() -> LaunchDescription:
         [
             DeclareLaunchArgument("use_sim_time", default_value="false"),
             DeclareLaunchArgument("moveit_rviz", default_value="true"),
+            DeclareLaunchArgument(
+                "tabletop_scene",
+                default_value="false",
+                description="Publish the sim-scene collision props (table/can/bin). "
+                "Off by default on hardware — they don't match the real room.",
+            ),
             DeclareLaunchArgument(
                 "enable_arm_execution",
                 default_value="false",

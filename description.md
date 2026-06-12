@@ -208,8 +208,10 @@ ros2 run gemini_robotics_bridge gemini_robotics_bridge.py
 
 # Terminal 3 — executor, pointed at hardware
 ros2 launch gemini_pick_place_executor executor.launch.py \
-  execute:=true use_gazebo:=false use_sim_time:=false
+  execute:=true use_gazebo:=false use_sim_time:=false drive_axes:=xy
 ```
+
+(`drive_axes:=xy` matters on hardware: the camera's ~0.6 m minimum depth range forces the robot to perceive from afar and then drive *forward* to bring the target into the arm's reach. The `y_only` default matches the sim scene, where targets spawn at grasping distance.)
 
 **Safety gates:** `enable_arm_execution` and `enable_gripper_execution` default to **false** — the bridge rejects trajectory goals until you pass them as true (or `ros2 param set` at runtime). Bring the stack up gated first, confirm `/joint_states` tracks the physical arm (flex a joint by hand), then enable.
 
@@ -258,7 +260,7 @@ Things that will bite an integrator who doesn't know them:
 3. **Odometry is relative.** "Return to origin" means the odom pose captured at run start. Restarting the bridge zeroes the integrator. There is no map frame, no localization, no absolute anchor.
 4. **Camera depth floor ≈ 0.6 m.** The Astra Pro+ returns invalid depth (0.0) closer than that. Objects must sit in the 0.6 m+ band; `perception_bridge` searches a small radius around the requested pixel for valid depth but cannot conjure depth that isn't there.
 5. **Camera pose comes from the URDF.** The `astra_joint` origin in `yahboom_rosmaster_description/urdf/robots/rosmaster_x3_plus.urdf.xacro` must match the physical mount (currently 19° downward pitch). If projections are systematically offset, this transform is the first suspect. There is no hand-eye calibration step.
-6. **The collision scene is minimal, and the octomap is deliberately disabled.** `publish_tabletop_scene.py` publishes one hardcoded table box; MoveIt does not know about the robot's own chassis or anything else in the room — keep clutter out of the arm's envelope. The depth-camera octomap updater (`sensors_3d.yaml`) is pointed at a dead topic on purpose: a live octomap voxelizes the pick target itself and MoveIt then rejects grasp plans as in-collision. Don't "fix" it without also solving target-region clearing and gripper-linkage self-filtering (see the comment in that file).
+6. **On hardware, MoveIt plans with NO world collision objects — deliberately.** `publish_tabletop_scene.py` publishes the *simulation* scene (table slab, can, bin walls) hardcoded in `base_footprint` coordinates; on real hardware those props are fiction that collision-rejects valid grasps, so `hardware_moveit.launch.py` gates the node off by default (`tabletop_scene:=true` re-enables it; sim keeps it always). The depth-camera octomap updater (`sensors_3d.yaml`) is likewise pointed at a dead topic: a live octomap voxelizes the pick target itself and MoveIt rejects grasp plans as in-collision. Net effect on hardware: the planner only avoids the robot's own body — keep the arm's workspace physically clear, and don't "fix" either disabled layer without solving target-region clearing, gripper-linkage self-filtering, and real-scene-matched props.
 7. **Gemini is a runtime dependency.** Every run makes 1–2+ API calls (pick + verify per attempt). Expect seconds of latency per call, quota limits (key rotation helps), and nondeterminism — the same scene can yield slightly different pixels run to run. All prompts/responses are logged to disk (`log_dir`) for postmortems.
 8. **Trajectory timing on hardware is approximate.** The bridge executes waypoints over serial sequentially and can run slower than the planned trajectory. If MoveIt aborts with execution-duration complaints, raise `trajectory_execution.allowed_execution_duration_scaling` in `hardware_moveit.launch.py`.
 9. **Out-of-range servo commands clamp silently** to the servo's 0–180° span. A plan that exceeds `servo_map.yaml` range stops short physically; the symptom is the *next* plan failing its start-state tolerance check.
@@ -279,6 +281,7 @@ Things that will bite an integrator who doesn't know them:
 | Arm goals rejected | `enable_arm_execution` still false, or bridge in stub mode (no serial). |
 | Gemini service errors | `GEMINI_API_KEY` unset, quota exhausted (check `log_path` in the response), or no network. |
 | Gripper crushes / never detects contact | Close-loop thresholds (§6) still Gazebo-tuned — re-tune against real servo telemetry. |
+| `find_feasible_drive: no feasible offset in N candidates` | Three suspects in order: (1) `drive_axes` doesn't permit the axis the target needs (`y_only` never drives forward — candidate count 18 ≈ lateral-only); (2) phantom collision objects — the sim-scene props reject everything if `tabletop_scene:=true` on hardware; (3) target genuinely beyond arm reach + drive range (every candidate is IK-validated). |
 | Base doesn't move on hardware | Executor started without the launch file's topic overrides (§7.1), or `enable_base_drive:=false`. |
 
 For deeper background: `docs/PLAN-pragmatic.md` (deployment rationale and phase history) and `src/yahboom_rosmaster/README.md` (the original sim-only debug flow).
