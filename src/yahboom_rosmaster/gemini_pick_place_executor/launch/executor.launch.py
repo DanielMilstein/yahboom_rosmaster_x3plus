@@ -12,6 +12,7 @@ FORWARDED_PARAMS = [
     ("execute", "false"),
     ("ik_probe", "false"),
     ("ik_probe_z", "0.166"),
+    ("arm_base_offset_x_m", "0.09825"),
     ("task", "put the red can in the blue bin"),
     ("pick_lift_m", "0.06"),
     ("place_lift_m", "0.06"),

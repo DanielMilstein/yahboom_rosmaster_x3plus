@@ -138,6 +138,10 @@ class GeminiPickPlaceExecutor(Node):
         # IK. Maps the 5-DOF arm's KDL feasibility boundary on real config.
         self.declare_parameter("ik_probe", False)
         self.declare_parameter("ik_probe_z", 0.166)
+        # x of arm_joint1 (the arm's yaw column) in base_footprint, from the
+        # URDF (rosmaster_x3_plus_arm.urdf.xacro arm_joint1 origin). Used to
+        # put candidate grasp yaws on the 5-DOF arm's reachable manifold.
+        self.declare_parameter("arm_base_offset_x_m", 0.09825)
         self.declare_parameter("project_timeout_sec", 3.0)
         self.declare_parameter("service_timeout_sec", 10.0)
         self.declare_parameter("pick_lift_m", 0.06)
@@ -982,8 +986,15 @@ class GeminiPickPlaceExecutor(Node):
         """Generate fallback orientations from top-down to tilted, all yawed to face target.
         Baseline (candidate 0) is RPY=(π, 0, yaw) — the empirically-correct
         gripper-points-down on this URDF. Tilts are RPY=(π, -delta, yaw).
+
+        Yaw is measured about the ARM's yaw column (arm_joint1, mounted
+        0.09825 m forward of base_footprint), not the base origin. A 5-DOF
+        arm can only realize gripper azimuths through its own column; KDL
+        solves exact 6D poses, so a yaw off that manifold by even a fraction
+        of a degree makes IK fail for every off-axis target.
         """
-        yaw = math.atan2(target_y, target_x)
+        arm_x = float(self.get_parameter("arm_base_offset_x_m").value)
+        yaw = math.atan2(target_y, target_x - arm_x)
         cy = math.cos(yaw / 2.0)
         sy = math.sin(yaw / 2.0)
 
