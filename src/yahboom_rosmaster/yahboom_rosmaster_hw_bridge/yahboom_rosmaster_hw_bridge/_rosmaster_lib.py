@@ -66,5 +66,17 @@ def acquire_driver(
     driver = lib.Rosmaster(car_type=car_type, com=port, delay=delay, debug=debug)
     driver.create_receive_threading()
     time.sleep(handshake_settle_s)
+    # The constructor arg only stores the enum library-side; the STM32
+    # keeps whatever profile it last had unless explicitly told. The
+    # firmware uses the enum for BOTH command scaling and encoder
+    # feedback, so skipping this made the bridge drive ~5x hot with
+    # inverted odometry regardless of the launch's car_type.
+    try:
+        driver.set_car_type(int(car_type))
+        time.sleep(0.1)
+    except Exception as exc:  # noqa: BLE001
+        logging.getLogger("yahboom_hw_bridge").warning(
+            "set_car_type(%s) failed: %s", car_type, exc
+        )
     _DRIVER_SINGLETON = driver
     return driver
