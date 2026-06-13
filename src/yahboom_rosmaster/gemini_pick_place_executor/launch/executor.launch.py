@@ -71,6 +71,7 @@ FORWARDED_PARAMS = [
     ("drive_max_lin_speed_mps", "0.10"),
     ("drive_position_tol_m", "0.01"),
     ("drive_timeout_sec", "10.0"),
+    ("drive_abort_divergence_m", "0.10"),
     ("return_after_place", "true"),
     ("drive_mode", "auto"),
     ("stow_for_perception", "true"),

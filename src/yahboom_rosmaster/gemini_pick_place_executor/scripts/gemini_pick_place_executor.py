@@ -142,6 +142,10 @@ class GeminiPickPlaceExecutor(Node):
         # URDF (rosmaster_x3_plus_arm.urdf.xacro arm_joint1 origin). Used to
         # put candidate grasp yaws on the 5-DOF arm's reachable manifold.
         self.declare_parameter("arm_base_offset_x_m", 0.09825)
+        # Abort a closed-loop drive if the position error grows this much
+        # past its best value — catches inverted/mis-scaled odometry
+        # (positive-feedback runaway) within centimeters. 0 disables.
+        self.declare_parameter("drive_abort_divergence_m", 0.10)
         self.declare_parameter("project_timeout_sec", 3.0)
         self.declare_parameter("service_timeout_sec", 10.0)
         self.declare_parameter("pick_lift_m", 0.06)
@@ -1514,8 +1518,13 @@ class GeminiPickPlaceExecutor(Node):
         max_speed = float(self.get_parameter("drive_max_lin_speed_mps").value)
         tol = float(self.get_parameter("drive_position_tol_m").value)
         timeout = float(self.get_parameter("drive_timeout_sec").value)
+        divergence = float(self.get_parameter("drive_abort_divergence_m").value)
         period = 0.05  # 20 Hz
 
+        initial_err = math.sqrt(
+            (goal_x_w - x0) ** 2 + (goal_y_w - y0) ** 2
+        )
+        min_err = initial_err
         deadline = self.get_clock().now().nanoseconds / 1e9 + timeout
         while rclpy.ok():
             now = self.get_clock().now().nanoseconds / 1e9
@@ -1541,6 +1550,19 @@ class GeminiPickPlaceExecutor(Node):
             err_x_w = goal_x_w - cx
             err_y_w = goal_y_w - cy
             err_norm = math.sqrt(err_x_w * err_x_w + err_y_w * err_y_w)
+            # Divergence abort: if the error GROWS while we drive, the
+            # odometry feedback is lying (wrong sign/scale, e.g. bad
+            # car_type) and the loop is positive-feedback — stop NOW
+            # instead of accelerating into furniture until the timeout.
+            min_err = min(min_err, err_norm)
+            if divergence > 0.0 and err_norm > min_err + divergence:
+                self.get_logger().error(
+                    f"drive_relative_base: error diverging ({err_norm:.3f} m, "
+                    f"best was {min_err:.3f} m) — odometry feedback is likely "
+                    "inverted or mis-scaled (check car_type). Stopping."
+                )
+                self.publish_zero_velocity()
+                return False
             if err_norm < tol:
                 self.publish_zero_velocity()
                 settle = float(self.get_parameter("drive_settle_sec").value)
