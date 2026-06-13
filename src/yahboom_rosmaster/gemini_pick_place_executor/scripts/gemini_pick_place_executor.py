@@ -1,10 +1,15 @@
 #!/usr/bin/env python3
 
+import faulthandler
 import json
 import math
 import threading
 import time
 from copy import deepcopy
+
+# moveit_py is a C++ binding; if it segfaults we want the Python-level
+# stack on stderr instead of a silent exit code -11.
+faulthandler.enable(all_threads=True)
 
 from control_msgs.action import FollowJointTrajectory
 from geometry_msgs.msg import PointStamped, PoseStamped, TwistStamped
@@ -510,8 +515,8 @@ class GeminiPickPlaceExecutor(Node):
                 image, plan, target_point, _re_destination = perceived
                 self.sanitize_destination_z(target_point, destination_point)
             else:
-                target_point.point.x = float(target_point.point.x) - applied_dx
-                target_point.point.y = float(target_point.point.y) - applied_dy
+                # drive_to_feasible already reflected the base move in
+                # target_point's coordinates — do NOT subtract again.
                 self.get_logger().info(
                     f"target dead-reckoned through drive: "
                     f"({target_point.point.x:.3f},"
