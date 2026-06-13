@@ -146,6 +146,11 @@ class GeminiPickPlaceExecutor(Node):
         # past its best value — catches inverted/mis-scaled odometry
         # (positive-feedback runaway) within centimeters. 0 disables.
         self.declare_parameter("drive_abort_divergence_m", 0.10)
+        # Re-run perception after the approach drive (sim default: refines
+        # the target from the closer vantage). On hardware set false: the
+        # drive puts the target inside the camera's ~0.6 m minimum range,
+        # so re-perception always fails — dead-reckon through odom instead.
+        self.declare_parameter("reperceive_after_drive", True)
         self.declare_parameter("project_timeout_sec", 3.0)
         self.declare_parameter("service_timeout_sec", 10.0)
         self.declare_parameter("pick_lift_m", 0.06)
@@ -463,6 +468,8 @@ class GeminiPickPlaceExecutor(Node):
         self.sanitize_destination_z(target_point, destination_point)
 
         initial_odom = None
+        reperceive = bool(self.get_parameter("reperceive_after_drive").value)
+        extent = None
         if execute and drive_enabled:
             pick_lift = float(self.get_parameter("pick_lift_m").value)
             # Test pre-pick (target.z + pick_lift) and the pick height
@@ -470,6 +477,13 @@ class GeminiPickPlaceExecutor(Node):
             # offset works for both.
             initial_pick_lifts = [pick_lift, 0.0]
             initial_odom = self.snapshot_odom()  # may be None in open-loop mode
+            if not reperceive:
+                # Hardware: the approach drive puts the target inside the
+                # camera's ~0.6 m minimum-range blind zone, so neither a
+                # re-perception nor a post-drive extent measurement can see
+                # it. Measure the object NOW, from the valid pre-drive
+                # vantage, and dead-reckon positions through the drive.
+                extent = self.measure_object_extent(plan, image)
             drive_result = self.drive_to_feasible(
                 target_point, initial_pick_lifts, "drive_to_reach_target"
             )
@@ -488,19 +502,31 @@ class GeminiPickPlaceExecutor(Node):
                 f"{destination_point.point.y:.3f},"
                 f"{destination_point.point.z:.3f})"
             )
-            perceived = self.perceive_targets()
-            if perceived is None:
-                return
-            # Use refreshed image/plan/target, but DISCARD the re-perceived destination.
-            image, plan, target_point, _re_destination = perceived
-            self.sanitize_destination_z(target_point, destination_point)
+            if reperceive:
+                perceived = self.perceive_targets()
+                if perceived is None:
+                    return
+                # Use refreshed image/plan/target, but DISCARD the re-perceived destination.
+                image, plan, target_point, _re_destination = perceived
+                self.sanitize_destination_z(target_point, destination_point)
+            else:
+                target_point.point.x = float(target_point.point.x) - applied_dx
+                target_point.point.y = float(target_point.point.y) - applied_dy
+                self.get_logger().info(
+                    f"target dead-reckoned through drive: "
+                    f"({target_point.point.x:.3f},"
+                    f"{target_point.point.y:.3f},"
+                    f"{target_point.point.z:.3f})"
+                )
 
         # Promote target_point.z to the top of the object so pre-pick lift gives
         # genuine clearance above it, and capture the object height for the pick
         # descent. Without this, the perceived z lands somewhere on the can side
         # and the gripper crashes down on top of it.
-        z_top, measured_height, measured_z_bottom = self.measure_object_extent(
-            plan, image
+        z_top, measured_height, measured_z_bottom = (
+            extent
+            if extent is not None
+            else self.measure_object_extent(plan, image)
         )
         if z_top is not None:
             target_point.point.z = z_top

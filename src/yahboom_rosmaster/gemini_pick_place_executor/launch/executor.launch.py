@@ -72,6 +72,10 @@ FORWARDED_PARAMS = [
     ("drive_position_tol_m", "0.01"),
     ("drive_timeout_sec", "10.0"),
     ("drive_abort_divergence_m", "0.10"),
+    # Sim refines perception after the approach drive; on hardware pass
+    # reperceive_after_drive:=false — the drive puts the target inside the
+    # Astra's ~0.6 m minimum depth range, so re-perception always fails.
+    ("reperceive_after_drive", "true"),
     ("return_after_place", "true"),
     ("drive_mode", "auto"),
     ("stow_for_perception", "true"),
