@@ -12,8 +12,10 @@ false. Bring up first to verify joint_states, then flip the relevant
 gate via launch arg (or `ros2 param set ...`) once servo_map.yaml is
 calibrated and the robot is clear.
 
-`car_type` defaults to 1 (Yahboom enum: X3). For the X3 PLUS relaunch
-with car_type:=2 (or 5) if Mecanum teleop drives wrong.
+`car_type` defaults to 2 (Yahboom enum: X3 Plus) — verified by the
+probe_car_type.py sweep on 2026-06-12. Wrong enums corrupt BOTH command
+scaling and odometry feedback (1 and 4 invert the reported velocity,
+which turns closed-loop drives into runaways).
 """
 import os
 
@@ -43,8 +45,10 @@ def generate_launch_description() -> LaunchDescription:
         DeclareLaunchArgument("serial_baud", default_value="115200"),
         DeclareLaunchArgument(
             "car_type",
-            default_value="1",
-            description="Yahboom kinematics enum. 1=X3, try 2 or 5 for X3 Plus.",
+            default_value="2",
+            description="Yahboom kinematics enum. 2 = X3 Plus, verified by sweep "
+            "2026-06-12: correct speed, direction, and truthful odometry. "
+            "1/4 drive ~5x hot with inverted feedback; 5 twists; 6 is dead.",
         ),
         DeclareLaunchArgument("serial_debug", default_value="false"),
         DeclareLaunchArgument("publish_odom_tf", default_value="true"),

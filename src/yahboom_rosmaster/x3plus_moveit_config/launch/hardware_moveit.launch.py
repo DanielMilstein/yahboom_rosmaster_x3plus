@@ -171,7 +171,12 @@ def generate_launch_description() -> LaunchDescription:
                 default_value="false",
                 description="Gate gripper execution. Flip to true after grip_joint calibration.",
             ),
-            DeclareLaunchArgument("car_type", default_value="1"),
+            DeclareLaunchArgument(
+                "car_type",
+                default_value="2",
+                description="Yahboom kinematics enum. 2 = X3 Plus (sweep-verified); "
+                "wrong values corrupt command scale AND odometry sign.",
+            ),
             DeclareLaunchArgument(
                 "serial_port",
                 default_value="/dev/myserial",
