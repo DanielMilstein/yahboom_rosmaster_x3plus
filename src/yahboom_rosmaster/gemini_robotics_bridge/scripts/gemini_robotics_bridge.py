@@ -131,6 +131,21 @@ PICK_PLACE_SCHEMA = {
     },
 }
 
+# Schema for the verify-pick service. Must be passed to call_model for
+# verify requests: the response_schema in the API config structurally
+# forces the output shape, so sending PICK_PLACE_SCHEMA there makes
+# Gemini answer in the planning schema no matter what the prompt asks.
+VERIFY_PICK_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["picked_up", "confidence", "reason"],
+    "properties": {
+        "picked_up": {"type": "boolean"},
+        "confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+        "reason": {"type": "string", "maxLength": 240},
+    },
+}
+
 
 def utc_stamp():
     return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ")
@@ -603,7 +618,7 @@ class GeminiRoboticsBridge(Node):
                 f"{self.verify_prompt}\n\n"
                 f"Target object: {request.target_label}\n"
             )
-            raw_text = self.call_model(prompt, image_bytes)
+            raw_text = self.call_model(prompt, image_bytes, schema=VERIFY_PICK_SCHEMA)
             parsed = None
             error_message = ""
             try:
@@ -722,7 +737,7 @@ class GeminiRoboticsBridge(Node):
             f"{json.dumps(PICK_PLACE_SCHEMA, sort_keys=True)}"
         )
 
-    def call_model(self, prompt, image_bytes):
+    def call_model(self, prompt, image_bytes, schema=None):
         try:
             from google.genai import types
         except ImportError:
@@ -739,7 +754,9 @@ class GeminiRoboticsBridge(Node):
 
         config = {
             "response_mime_type": "application/json",
-            "response_schema": schema_for_gemini_api(PICK_PLACE_SCHEMA),
+            "response_schema": schema_for_gemini_api(
+                schema if schema is not None else PICK_PLACE_SCHEMA
+            ),
             "temperature": float(self.get_parameter("temperature").value),
         }
         thinking_budget = int(self.get_parameter("thinking_budget").value)

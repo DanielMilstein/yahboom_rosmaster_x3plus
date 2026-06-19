@@ -1059,7 +1059,21 @@ class GeminiPickPlaceExecutor(Node):
             qz = sd * cy
             n = math.sqrt(qw * qw + qx * qx + qy * qy + qz * qz)
             if n > 1e-9:
-                results.append((qx / n, qy / n, qz / n, qw / n))
+                qx, qy, qz, qw = qx / n, qy / n, qz / n, qw / n
+                # Tilting pitches the jaw-opening axis (gripper x) toward
+                # vertical — at 1.4 rad the jaws end up one-above-one-below,
+                # useless for grasping an object off a surface. Roll 90°
+                # about the gripper's own approach axis (the free wrist DOF,
+                # so still on the 5-DOF manifold) to keep the jaws
+                # horizontal at every tilt. Top-down (candidate 0) is left
+                # untouched — its jaws are already horizontal.
+                rw = rz = math.sqrt(0.5)  # local R_z(+90°)
+                results.append((
+                    qx * rw + qy * rz,
+                    qy * rw - qx * rz,
+                    qw * rz + qz * rw,
+                    qw * rw - qz * rz,
+                ))
         return results
 
     def state_is_collision_free(self, state):
