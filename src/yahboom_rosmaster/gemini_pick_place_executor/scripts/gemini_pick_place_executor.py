@@ -1455,7 +1455,16 @@ class GeminiPickPlaceExecutor(Node):
 
         ik_fails = 0
         collision_fails = 0
+        total_candidates = len(candidates)
+        progress_every = max(1, total_candidates // 20)  # ~20 updates total
         for cand_idx, (dx, dy) in enumerate(candidates):
+            if cand_idx % progress_every == 0:
+                pct = int(100 * cand_idx / total_candidates) if total_candidates else 100
+                bar = "#" * (pct // 5) + "-" * (20 - pct // 5)
+                self.get_logger().info(
+                    f"find_feasible_drive: [{bar}] {pct:3d}% "
+                    f"({cand_idx}/{total_candidates}, dx={dx:.3f} dy={dy:.3f})"
+                )
             fx = fx_world - dx
             fy = fy_world - dy
             orientations = self.candidate_orientations(fx, fy)
