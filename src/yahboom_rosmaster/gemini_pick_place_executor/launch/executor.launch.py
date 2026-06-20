@@ -21,6 +21,9 @@ FORWARDED_PARAMS = [
     # Descend below the perceived (top-surface) target.z to grip a short
     # object's body. 0.0 = sim default; hardware small objects want ~0.02.
     ("grasp_z_offset_m", "0.0"),
+    # Wrist (joint5) roll to seat the jaws in the grasping plane. 0 = sim
+    # default; hardware grasps that come out one-up/one-down want ~1.5708.
+    ("grasp_roll_offset_rad", "0.0"),
     ("table_z_source", "perception"),
     ("table_z_m", "0.14"),
     ("pick_z_safety_m", "0.10"),

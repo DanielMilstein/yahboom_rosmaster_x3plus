@@ -208,6 +208,11 @@ class GeminiPickPlaceExecutor(Node):
         # a centimetre or two beneath it. Default 0.0 preserves sim behavior
         # (grasp at target.z). The table-floor clamp still applies on top.
         self.declare_parameter("grasp_z_offset_m", 0.0)
+        # Roll applied to the wrist (arm_joint5) of every IK-solved grasp pose
+        # to seat the jaws in the grasping plane. IK leaves the wrist roll
+        # free and often picks one-up/one-down; ~+/-1.5708 corrects it.
+        # Default 0 preserves sim behavior.
+        self.declare_parameter("grasp_roll_offset_rad", 0.0)
         # Table-height safety floor. The pick fingertip is clamped so it never
         # descends below `table_z + pick_z_safety_m`. With table_z_source set
         # to "perception", we use the z_bottom from measure_object_extent
@@ -1071,21 +1076,7 @@ class GeminiPickPlaceExecutor(Node):
             qz = sd * cy
             n = math.sqrt(qw * qw + qx * qx + qy * qy + qz * qz)
             if n > 1e-9:
-                qx, qy, qz, qw = qx / n, qy / n, qz / n, qw / n
-                # Tilting pitches the jaw-opening axis (gripper x) toward
-                # vertical — at 1.4 rad the jaws end up one-above-one-below,
-                # useless for grasping an object off a surface. Roll 90°
-                # about the gripper's own approach axis (the free wrist DOF,
-                # so still on the 5-DOF manifold) to keep the jaws
-                # horizontal at every tilt. Top-down (candidate 0) is left
-                # untouched — its jaws are already horizontal.
-                rw = rz = math.sqrt(0.5)  # local R_z(+90°)
-                results.append((
-                    qx * rw + qy * rz,
-                    qy * rw - qx * rz,
-                    qw * rz + qz * rw,
-                    qw * rw - qz * rz,
-                ))
+                results.append((qx / n, qy / n, qz / n, qw / n))
         return results
 
     def state_is_collision_free(self, state):
@@ -1175,6 +1166,32 @@ class GeminiPickPlaceExecutor(Node):
                     f"[{label}] IK candidate #{idx} self-collides; skipping"
                 )
                 continue
+            # Roll the wrist (arm_joint5) about its own axis to put the jaws
+            # in the grasping plane. IK fixes the approach direction but the
+            # wrist roll is a free DOF it picks arbitrarily — often leaving
+            # the jaws one-up/one-down instead of straddling the object.
+            # grasp_roll_offset_rad (default 0; ~+/-1.5708 on hardware) spins
+            # joint5 without moving the fingertip (it lies on the wrist axis),
+            # so the grasp point is preserved.
+            roll = float(self.get_parameter("grasp_roll_offset_rad").value)
+            if abs(roll) > 1e-9:
+                positions = list(state.get_joint_group_positions(arm_name))
+                rolled5 = positions[4] + roll
+                # arm_joint5 URDF limit: -2.0 .. 3.14159.
+                rolled5 = max(-2.0, min(3.14159, rolled5))
+                positions[4] = rolled5
+                state.set_joint_group_positions(arm_name, positions)
+                state.update()
+                if not self.state_is_collision_free(state):
+                    self.get_logger().warn(
+                        f"[{label}] orientation #{idx} self-collides after "
+                        f"joint5 roll {roll:+.3f}; skipping"
+                    )
+                    continue
+                self.get_logger().info(
+                    f"[{label}] applied joint5 roll {roll:+.3f} -> "
+                    f"arm_joint5={rolled5:.3f}"
+                )
             self.get_logger().info(
                 f"[{label}] IK ok with orientation #{idx} "
                 f"quat=({qx:.3f},{qy:.3f},{qz:.3f},{qw:.3f})"
