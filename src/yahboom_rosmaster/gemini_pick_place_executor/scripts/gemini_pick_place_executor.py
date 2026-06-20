@@ -1125,6 +1125,35 @@ class GeminiPickPlaceExecutor(Node):
             )
             return True
 
+    # Forward-reaching IK seeds (arm_joint1..5). KDL returns a single solution
+    # near its seed; seeded from the default 'up' (all-zero) pose it fails to
+    # find the far-forward, near-horizontal grasp branches that physically
+    # exist (verified by hand). Forward seeds first so the common case is fast.
+    _IK_SEEDS = (
+        (0.0, 0.70, -0.60, -1.30, 0.0),
+        (0.0, 1.00, -1.00, -1.20, 0.0),
+        (0.0, 0.60, -1.10, -0.80, 1.5),
+        (0.0, 0.90, -0.50, -1.50, -1.5),
+        (0.0, 0.00, 0.00, 0.00, 0.0),
+    )
+
+    def _ik_solve(self, robot_model, arm_name, pose, ee_link, timeout):
+        """IK from several forward-reaching seeds; returns the first
+        collision-free RobotState or None. Multiple seeds let KDL find the
+        far-forward grasp branch it misses when seeded only from 'up'."""
+        from moveit.core.robot_state import RobotState
+        for seed in self._IK_SEEDS:
+            state = RobotState(robot_model)
+            try:
+                state.set_joint_group_positions(arm_name, list(seed))
+            except Exception:  # noqa: BLE001
+                pass
+            state.update()
+            if state.set_from_ik(arm_name, pose, ee_link, timeout):
+                if self.state_is_collision_free(state):
+                    return state
+        return None
+
     def plan_and_execute_pose(self, pose_stamped, label):
         if self.arm_component is None or self.moveit is None:
             self.get_logger().error(f"[{label}] MoveItPy not initialized")
@@ -1175,15 +1204,12 @@ class GeminiPickPlaceExecutor(Node):
             attempt_pose.orientation.z = qz
             attempt_pose.orientation.w = qw
 
-            state = RobotState(robot_model)
-            state.update()
-            ok = state.set_from_ik(arm_name, attempt_pose, ee_link, timeout)
-            if not ok:
-                self.get_logger().warn(f"[{label}] IK candidate #{idx} failed")
-                continue
-            if not self.state_is_collision_free(state):
+            state = self._ik_solve(
+                robot_model, arm_name, attempt_pose, ee_link, timeout
+            )
+            if state is None:
                 self.get_logger().warn(
-                    f"[{label}] IK candidate #{idx} self-collides; skipping"
+                    f"[{label}] IK candidate #{idx} failed (all seeds)"
                 )
                 continue
             self.get_logger().info(
@@ -1451,16 +1477,11 @@ class GeminiPickPlaceExecutor(Node):
                     attempt_pose.orientation.z = qz
                     attempt_pose.orientation.w = qw
 
-                    state = RobotState(robot_model)
-                    state.update()
-                    if not state.set_from_ik(
-                        arm_name, attempt_pose, ee_link, timeout
-                    ):
+                    state = self._ik_solve(
+                        robot_model, arm_name, attempt_pose, ee_link, timeout
+                    )
+                    if state is None:
                         ik_fails += 1
-                        all_lifts_ok = False
-                        break
-                    if not self.state_is_collision_free(state):
-                        collision_fails += 1
                         all_lifts_ok = False
                         break
                 if all_lifts_ok:
