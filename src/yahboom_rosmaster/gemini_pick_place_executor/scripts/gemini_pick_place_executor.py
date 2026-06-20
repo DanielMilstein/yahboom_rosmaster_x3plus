@@ -201,6 +201,13 @@ class GeminiPickPlaceExecutor(Node):
         # the can the fingertip descends (0.0 = top, 0.5 = mid, 1.0 = bottom).
         self.declare_parameter("object_height_fallback_m", 0.10)
         self.declare_parameter("grasp_z_fraction_from_top", 0.5)
+        # Descend this far BELOW the perceived target.z to grip the object
+        # body (positive = lower). Gemini's target point projects to the
+        # object's visible TOP surface; for a short object whose only
+        # perceived point is the top, the fingers must close around the body
+        # a centimetre or two beneath it. Default 0.0 preserves sim behavior
+        # (grasp at target.z). The table-floor clamp still applies on top.
+        self.declare_parameter("grasp_z_offset_m", 0.0)
         # Table-height safety floor. The pick fingertip is clamped so it never
         # descends below `table_z + pick_z_safety_m`. With table_z_source set
         # to "perception", we use the z_bottom from measure_object_extent
@@ -1956,13 +1963,15 @@ class GeminiPickPlaceExecutor(Node):
         return True
 
     def _clamp_grasp_descent(self, target_point, object_height_m, table_z):
-        """Compute the pick offset relative to target.z. Default is 0 — grasp
-        at target.z (Gemini's bias-pixel projection, typically on the can's
-        visible surface). The floor clamp can still raise this when target.z
-        itself dips below table_z + safety_margin. Returns the descent value
-        (positive = above target.z); logs the clamp when triggered.
+        """Compute the pick offset relative to target.z. The base offset is
+        -grasp_z_offset_m: grasp at target.z (Gemini's bias-pixel projection,
+        typically the object's visible top), optionally lowered by
+        grasp_z_offset_m to reach a short object's body. The floor clamp can
+        still raise this when the resulting pick_z dips below
+        table_z + safety_margin. Returns the descent value (added to target.z;
+        negative = below the perceived surface); logs the clamp when triggered.
         """
-        grasp_descent = 0.0
+        grasp_descent = -float(self.get_parameter("grasp_z_offset_m").value)
         safety = float(self.get_parameter("pick_z_safety_m").value)
         pick_z_min = float(table_z) + safety
         pick_z_unclamped = float(target_point.point.z) + grasp_descent

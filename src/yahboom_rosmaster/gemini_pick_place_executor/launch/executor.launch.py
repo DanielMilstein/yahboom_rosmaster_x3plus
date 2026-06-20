@@ -18,6 +18,9 @@ FORWARDED_PARAMS = [
     ("place_lift_m", "0.06"),
     ("object_height_fallback_m", "0.10"),
     ("grasp_z_fraction_from_top", "0.5"),
+    # Descend below the perceived (top-surface) target.z to grip a short
+    # object's body. 0.0 = sim default; hardware small objects want ~0.02.
+    ("grasp_z_offset_m", "0.0"),
     ("table_z_source", "perception"),
     ("table_z_m", "0.14"),
     ("pick_z_safety_m", "0.10"),
