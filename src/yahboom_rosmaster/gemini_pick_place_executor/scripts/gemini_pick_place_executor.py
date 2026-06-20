@@ -1077,6 +1077,26 @@ class GeminiPickPlaceExecutor(Node):
             n = math.sqrt(qw * qw + qx * qx + qy * qy + qz * qz)
             if n > 1e-9:
                 results.append((qx / n, qy / n, qz / n, qw / n))
+
+        # Roll every candidate about the gripper's approach axis (local z) to
+        # seat the jaws in the grasping plane. The fingertip offset lies along
+        # this axis, so the roll leaves the fingertip position invariant (IK
+        # re-solves the wrist) — unlike rolling joint5 directly, which swings
+        # the offset fingertip through an arc. Default 0 keeps sim behavior;
+        # ~1.0-2.1 rad on hardware (tune by eye).
+        roll = float(self.get_parameter("grasp_roll_offset_rad").value)
+        if abs(roll) > 1e-9:
+            rz = math.sin(roll / 2.0)
+            rw = math.cos(roll / 2.0)
+            rolled = []
+            for (qx, qy, qz, qw) in results:
+                rolled.append((
+                    qx * rw + qy * rz,
+                    qy * rw - qx * rz,
+                    qw * rz + qz * rw,
+                    qw * rw - qz * rz,
+                ))
+            results = rolled
         return results
 
     def state_is_collision_free(self, state):
@@ -1166,47 +1186,6 @@ class GeminiPickPlaceExecutor(Node):
                     f"[{label}] IK candidate #{idx} self-collides; skipping"
                 )
                 continue
-            # Roll the wrist (arm_joint5) about its own axis to put the jaws
-            # in the grasping plane. IK fixes the approach direction but the
-            # wrist roll is a free DOF it picks arbitrarily — often leaving
-            # the jaws one-up/one-down instead of straddling the object.
-            # grasp_roll_offset_rad (default 0; ~+/-1.5708 on hardware) spins
-            # joint5 without moving the fingertip (it lies on the wrist axis),
-            # so the grasp point is preserved.
-            roll = float(self.get_parameter("grasp_roll_offset_rad").value)
-            if abs(roll) > 1e-9:
-                try:
-                    positions = list(state.get_joint_group_positions(arm_name))
-                    j5 = float(positions[4])
-                    lo, hi = -2.0, 3.14159
-                    # +roll and -roll land the jaws in the SAME plane (a
-                    # parallel gripper is symmetric under 180 deg of wrist
-                    # roll), so prefer whichever stays inside the joint
-                    # limit — otherwise the clamp eats most of the roll and
-                    # the jaws barely move.
-                    if lo <= j5 + roll <= hi:
-                        new5 = j5 + roll
-                    elif lo <= j5 - roll <= hi:
-                        new5 = j5 - roll
-                    else:
-                        new5 = max(lo, min(hi, j5 + roll))
-                    positions[4] = new5
-                    state.set_joint_group_positions(arm_name, positions)
-                    state.update()
-                    self.get_logger().info(
-                        f"[{label}] joint5 roll {roll:+.3f}: "
-                        f"arm_joint5 {j5:.3f} -> {new5:.3f}"
-                    )
-                except Exception as exc:  # noqa: BLE001
-                    self.get_logger().error(
-                        f"[{label}] joint5 roll failed: {exc}"
-                    )
-                if not self.state_is_collision_free(state):
-                    self.get_logger().warn(
-                        f"[{label}] orientation #{idx} self-collides after "
-                        f"joint5 roll; skipping"
-                    )
-                    continue
             self.get_logger().info(
                 f"[{label}] IK ok with orientation #{idx} "
                 f"quat=({qx:.3f},{qy:.3f},{qz:.3f},{qw:.3f})"
