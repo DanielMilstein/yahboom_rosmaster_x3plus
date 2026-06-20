@@ -1175,23 +1175,38 @@ class GeminiPickPlaceExecutor(Node):
             # so the grasp point is preserved.
             roll = float(self.get_parameter("grasp_roll_offset_rad").value)
             if abs(roll) > 1e-9:
-                positions = list(state.get_joint_group_positions(arm_name))
-                rolled5 = positions[4] + roll
-                # arm_joint5 URDF limit: -2.0 .. 3.14159.
-                rolled5 = max(-2.0, min(3.14159, rolled5))
-                positions[4] = rolled5
-                state.set_joint_group_positions(arm_name, positions)
-                state.update()
+                try:
+                    positions = list(state.get_joint_group_positions(arm_name))
+                    j5 = float(positions[4])
+                    lo, hi = -2.0, 3.14159
+                    # +roll and -roll land the jaws in the SAME plane (a
+                    # parallel gripper is symmetric under 180 deg of wrist
+                    # roll), so prefer whichever stays inside the joint
+                    # limit — otherwise the clamp eats most of the roll and
+                    # the jaws barely move.
+                    if lo <= j5 + roll <= hi:
+                        new5 = j5 + roll
+                    elif lo <= j5 - roll <= hi:
+                        new5 = j5 - roll
+                    else:
+                        new5 = max(lo, min(hi, j5 + roll))
+                    positions[4] = new5
+                    state.set_joint_group_positions(arm_name, positions)
+                    state.update()
+                    self.get_logger().info(
+                        f"[{label}] joint5 roll {roll:+.3f}: "
+                        f"arm_joint5 {j5:.3f} -> {new5:.3f}"
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    self.get_logger().error(
+                        f"[{label}] joint5 roll failed: {exc}"
+                    )
                 if not self.state_is_collision_free(state):
                     self.get_logger().warn(
                         f"[{label}] orientation #{idx} self-collides after "
-                        f"joint5 roll {roll:+.3f}; skipping"
+                        f"joint5 roll; skipping"
                     )
                     continue
-                self.get_logger().info(
-                    f"[{label}] applied joint5 roll {roll:+.3f} -> "
-                    f"arm_joint5={rolled5:.3f}"
-                )
             self.get_logger().info(
                 f"[{label}] IK ok with orientation #{idx} "
                 f"quat=({qx:.3f},{qy:.3f},{qz:.3f},{qw:.3f})"
