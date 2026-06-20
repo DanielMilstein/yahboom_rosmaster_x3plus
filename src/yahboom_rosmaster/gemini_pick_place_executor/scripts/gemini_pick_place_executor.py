@@ -484,10 +484,15 @@ class GeminiPickPlaceExecutor(Node):
         extent = None
         if execute and drive_enabled:
             pick_lift = float(self.get_parameter("pick_lift_m").value)
-            # Test pre-pick (target.z + pick_lift) and the pick height
-            # (target.z, no descent below the bias point) so the chosen base
-            # offset works for both.
-            initial_pick_lifts = [pick_lift, 0.0]
+            grasp_offset = float(self.get_parameter("grasp_z_offset_m").value)
+            # Validate the base offset at BOTH the pre-pick height
+            # (target.z + pick_lift) and the actual deepest pick point
+            # (target.z - grasp_z_offset). Validating only target.z used to
+            # let the base drive to a spot where the real, lower grasp was
+            # kinematically unreachable — the pick then failed all IK after
+            # a committed drive. The table-floor clamp only raises the pick,
+            # so the -grasp_offset point is the conservative lowest target.
+            initial_pick_lifts = [pick_lift, -grasp_offset]
             initial_odom = self.snapshot_odom()  # may be None in open-loop mode
             if not reperceive:
                 # Hardware: the approach drive puts the target inside the
