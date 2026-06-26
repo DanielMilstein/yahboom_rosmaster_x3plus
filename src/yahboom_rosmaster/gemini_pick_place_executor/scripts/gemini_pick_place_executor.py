@@ -213,6 +213,14 @@ class GeminiPickPlaceExecutor(Node):
         # free and often picks one-up/one-down; ~+/-1.5708 corrects it.
         # Default 0 preserves sim behavior.
         self.declare_parameter("grasp_roll_offset_rad", 0.0)
+        # When True, candidate_orientations yields the near-horizontal tilts
+        # FIRST (top-down last). At the arm's forward reach limit only the
+        # near-horizontal side-grasps are kinematically feasible (verified by
+        # IK probe and by hand); the default top-down-first order otherwise
+        # picks a too-vertical orientation that can't get its jaws around a
+        # short object's body. Default False preserves sim (close, top-down)
+        # behavior.
+        self.declare_parameter("grasp_tilt_first", False)
         # Table-height safety floor. The pick fingertip is clamped so it never
         # descends below `table_z + pick_z_safety_m`. With table_z_source set
         # to "perception", we use the z_bottom from measure_object_extent
@@ -1097,6 +1105,12 @@ class GeminiPickPlaceExecutor(Node):
                     qw * rw - qz * rz,
                 ))
             results = rolled
+        if bool(self.get_parameter("grasp_tilt_first").value):
+            # Prefer the near-horizontal side-grasp: reverse so the steepest
+            # tilt (~1.57 rad, horizontal) is tried first and top-down is the
+            # last resort. find_feasible and plan_and_execute share this order,
+            # so the validated and executed orientations stay consistent.
+            results = results[::-1]
         return results
 
     def state_is_collision_free(self, state):
