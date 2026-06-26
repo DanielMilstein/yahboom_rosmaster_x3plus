@@ -1151,10 +1151,19 @@ class GeminiPickPlaceExecutor(Node):
         (0.0, 0.00, 0.00, 0.00, 0.0),
     )
 
-    def _ik_solve(self, robot_model, arm_name, pose, ee_link, timeout):
+    def _ik_solve(self, robot_model, arm_name, pose, ee_link, timeout,
+                  check_collision=True):
         """IK from several forward-reaching seeds; returns the first
         collision-free RobotState or None. Multiple seeds let KDL find the
-        far-forward grasp branch it misses when seeded only from 'up'."""
+        far-forward grasp branch it misses when seeded only from 'up'.
+
+        check_collision=False skips the planning-scene query (state_is_collision_free).
+        The base search calls it that way: it only needs reachability, the
+        per-candidate collision query is the main source of moveit_py's
+        planning-scene-monitor concurrency segfault, and plan_and_execute
+        re-checks collision at the actual grasp poses. (On hardware the
+        tabletop/octomap are disabled, so the search-time check only caught
+        self-collisions anyway.)"""
         from moveit.core.robot_state import RobotState
         for seed in self._IK_SEEDS:
             state = RobotState(robot_model)
@@ -1164,7 +1173,7 @@ class GeminiPickPlaceExecutor(Node):
                 pass
             state.update()
             if state.set_from_ik(arm_name, pose, ee_link, timeout):
-                if self.state_is_collision_free(state):
+                if not check_collision or self.state_is_collision_free(state):
                     return state
         return None
 
@@ -1501,7 +1510,8 @@ class GeminiPickPlaceExecutor(Node):
                     attempt_pose.orientation.w = qw
 
                     state = self._ik_solve(
-                        robot_model, arm_name, attempt_pose, ee_link, timeout
+                        robot_model, arm_name, attempt_pose, ee_link, timeout,
+                        check_collision=False,
                     )
                     if state is None:
                         ik_fails += 1
