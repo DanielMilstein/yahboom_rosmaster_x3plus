@@ -47,6 +47,14 @@ class PerceptionBridge(Node):
         self.declare_parameter("override_cx", 0.0)
         self.declare_parameter("override_cy", 0.0)
         self.declare_parameter("expected_horizontal_fov", -1.0)
+        # Constant correction added to every projected point in base_frame
+        # [x, y, z] (metres). Compensates a small camera extrinsic bias (the
+        # Astra's mount pose in the URDF is slightly off, biasing localization
+        # laterally at the ~0.45 m grasp range). Default [0,0,0] = no change /
+        # sim behavior. Relative measurements (object height, grasp width)
+        # cancel the offset; only absolute target points shift. Tune from a
+        # no-drive perceive-only run: offset = (measured_pos - perceived_pos).
+        self.declare_parameter("correction_offset_xyz", [0.0, 0.0, 0.0])
 
         self.rgb_topic = self.get_parameter("rgb_topic").value
         self.depth_topic = self.get_parameter("depth_topic").value
@@ -337,12 +345,16 @@ class PerceptionBridge(Node):
             (camera_point.point.x, camera_point.point.y, camera_point.point.z),
         )
 
+        off = list(self.get_parameter("correction_offset_xyz").value)
+        if len(off) != 3:
+            off = [0.0, 0.0, 0.0]
+
         base_point = PointStamped()
         base_point.header.stamp = camera_point.header.stamp
         base_point.header.frame_id = self.base_frame
-        base_point.point.x = rx + t.x
-        base_point.point.y = ry + t.y
-        base_point.point.z = rz + t.z
+        base_point.point.x = rx + t.x + float(off[0])
+        base_point.point.y = ry + t.y + float(off[1])
+        base_point.point.z = rz + t.z + float(off[2])
         return base_point
 
     def publish_marker(self, point):

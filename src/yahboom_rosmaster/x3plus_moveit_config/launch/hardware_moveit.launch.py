@@ -131,6 +131,13 @@ def generate_launch_description() -> LaunchDescription:
                 "camera_info_topic": "/camera/color/camera_info",
                 "base_frame": "base_footprint",
                 "override_intrinsics": False,
+                # Camera extrinsic correction (base_frame metres), measured
+                # 2026-06-26 from a no-drive perceive run: cube was localized
+                # ~3.7 cm too far right and ~1.6 cm short at the ~0.45 m grasp
+                # range. offset = real - perceived. Fine-tune live with:
+                #   ros2 param set /x3plus_perception_bridge \
+                #       correction_offset_xyz "[x, y, z]"
+                "correction_offset_xyz": [0.016, 0.037, 0.0],
             }
         ],
     )
