@@ -24,6 +24,7 @@ FORWARDED_PARAMS = [
     # Wrist (joint5) roll to seat the jaws in the grasping plane. 0 = sim
     # default; hardware grasps that come out one-up/one-down want ~1.5708.
     ("grasp_roll_offset_rad", "0.0"),
+    ("grasp_tilt_first", "false"),
     ("table_z_source", "perception"),
     ("table_z_m", "0.14"),
     ("pick_z_safety_m", "0.10"),

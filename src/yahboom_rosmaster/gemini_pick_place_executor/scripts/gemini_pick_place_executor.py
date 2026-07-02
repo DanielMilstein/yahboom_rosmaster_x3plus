@@ -1050,7 +1050,98 @@ class GeminiPickPlaceExecutor(Node):
                 ok = False
                 break
         self.get_logger().info(f"[{label}] execution status: {status}")
+        if ok:
+            self._log_joint_readback(label, trajectory, group_name)
         return ok
+
+    def _log_joint_readback(self, label, trajectory, group_name):
+        """Diagnostic for physical grasp misses: once the servos settle after
+        an arm execution, log the trajectory's final commanded joint positions
+        against the /joint_states readback (per-joint error = servo tracking /
+        clamping), then FK the ACTUAL joints to log where the flange and the
+        modeled fingertip really are per the URDF. Splits a miss between arm
+        tracking error (joint deltas), tool-model error (FK fingertip vs the
+        commanded fingertip target), and perception error (FK fingertip on
+        target but off the real object)."""
+        arm_name = str(self.get_parameter("arm_group_name").value)
+        if group_name != arm_name or self.moveit is None:
+            return
+        try:
+            msg = trajectory.get_robot_trajectory_msg()
+            names = list(msg.joint_trajectory.joint_names)
+            commanded = [
+                float(p) for p in msg.joint_trajectory.points[-1].positions
+            ]
+        except Exception as exc:  # noqa: BLE001
+            self.get_logger().warn(
+                f"[{label}] joint readback: no trajectory msg ({exc})"
+            )
+            return
+        # execute() is async — poll /joint_states until the arm stops moving
+        # (3 consecutive stable reads) or the deadline passes. A servo pinned
+        # at a clamp reads stable but far from commanded; the deadline covers
+        # a readback that never stabilizes.
+        deadline = time.monotonic() + 8.0
+        time.sleep(0.5)
+        prev = None
+        stable = 0
+        actual = None
+        while time.monotonic() < deadline:
+            cur = [self._get_joint_position(n) for n in names]
+            if any(v is None for v in cur):
+                time.sleep(0.25)
+                continue
+            if prev is not None and max(
+                abs(a - b) for a, b in zip(cur, prev)
+            ) < 0.004:
+                stable += 1
+                if stable >= 3:
+                    actual = cur
+                    break
+            else:
+                stable = 0
+            prev = cur
+            time.sleep(0.25)
+        if actual is None:
+            actual = prev
+        if actual is None:
+            self.get_logger().warn(
+                f"[{label}] joint readback: no /joint_states for {names}"
+            )
+            return
+        detail = ", ".join(
+            f"{n}: cmd={c:+.3f} act={a:+.3f} err={a - c:+.3f}"
+            for n, c, a in zip(names, commanded, actual)
+        )
+        self.get_logger().info(f"[{label}] joint readback: {detail}")
+        try:
+            from moveit.core.robot_state import RobotState
+
+            ee_link = str(self.get_parameter("end_effector_link").value)
+            state = RobotState(self.moveit.get_robot_model())
+            state.set_joint_group_positions(arm_name, list(actual))
+            state.update()
+            tf = state.get_global_link_transform(ee_link)
+            px, py, pz = float(tf[0, 3]), float(tf[1, 3]), float(tf[2, 3])
+            tip = [
+                float(v)
+                for v in self.get_parameter("gripper_tip_offset_xyz").value
+            ]
+            fx = px + float(
+                tf[0, 0] * tip[0] + tf[0, 1] * tip[1] + tf[0, 2] * tip[2]
+            )
+            fy = py + float(
+                tf[1, 0] * tip[0] + tf[1, 1] * tip[1] + tf[1, 2] * tip[2]
+            )
+            fz = pz + float(
+                tf[2, 0] * tip[0] + tf[2, 1] * tip[1] + tf[2, 2] * tip[2]
+            )
+            self.get_logger().info(
+                f"[{label}] FK(actual joints): flange=({px:.3f},{py:.3f},{pz:.3f}) "
+                f"fingertip=({fx:.3f},{fy:.3f},{fz:.3f}) (URDF root frame)"
+            )
+        except Exception as exc:  # noqa: BLE001
+            self.get_logger().warn(f"[{label}] joint readback FK failed: {exc}")
 
     def candidate_orientations(self, target_x, target_y):
         """Generate fallback orientations from top-down to tilted, all yawed to face target.
