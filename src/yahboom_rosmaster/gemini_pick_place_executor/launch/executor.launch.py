@@ -48,7 +48,6 @@ FORWARDED_PARAMS = [
     # leaves headroom for system jitter.
     ("close_grip_timeout_s", "50.0"),
     ("carry_pose_named", "up"),
-    ("gripper_tcp_offset_z", "0.09"),
     ("gripper_tip_offset_xyz", "[0.0, 0.0, -0.09]"),
     ("end_effector_link", "arm_link5"),
     ("position_tolerance_m", "0.01"),

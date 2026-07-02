@@ -177,7 +177,6 @@ class GeminiPickPlaceExecutor(Node):
         self.declare_parameter("home_named", "up")
         self.declare_parameter("gripper_open_named", "open")
         self.declare_parameter("gripper_closed_named", "close")
-        self.declare_parameter("gripper_tcp_offset_z", 0.02)
         # Fingertip position in arm_link5's local frame. For the Yahboom X3 Plus
         # arm, grip_joint origin in arm_link5 frame is (-0.0035, -0.0126, -0.0685),
         # so the gripper extends along arm_link5's -Z. Fingertip is roughly
@@ -497,15 +496,6 @@ class GeminiPickPlaceExecutor(Node):
         extent = None
         if execute and drive_enabled:
             pick_lift = float(self.get_parameter("pick_lift_m").value)
-            grasp_offset = float(self.get_parameter("grasp_z_offset_m").value)
-            # Validate the base offset at BOTH the pre-pick height
-            # (target.z + pick_lift) and the actual deepest pick point
-            # (target.z - grasp_z_offset). Validating only target.z used to
-            # let the base drive to a spot where the real, lower grasp was
-            # kinematically unreachable — the pick then failed all IK after
-            # a committed drive. The table-floor clamp only raises the pick,
-            # so the -grasp_offset point is the conservative lowest target.
-            initial_pick_lifts = [pick_lift, -grasp_offset]
             initial_odom = self.snapshot_odom()  # may be None in open-loop mode
             if not reperceive:
                 # Hardware: the approach drive puts the target inside the
@@ -514,6 +504,22 @@ class GeminiPickPlaceExecutor(Node):
                 # it. Measure the object NOW, from the valid pre-drive
                 # vantage, and dead-reckon positions through the drive.
                 extent = self.measure_object_extent(plan, image)
+            # Validate the base offset at BOTH the pre-pick height
+            # (target.z + pick_lift) and the actual deepest pick point
+            # (target.z + nominal descent). Validating only target.z used to
+            # let the base drive to a spot where the real, lower grasp was
+            # kinematically unreachable — the pick then failed all IK after
+            # a committed drive. The table-floor clamp only raises the pick,
+            # so the nominal descent point is the conservative lowest target.
+            height_guess = (
+                extent[1]
+                if extent is not None and extent[1] is not None and extent[1] > 0.0
+                else float(self.get_parameter("object_height_fallback_m").value)
+            )
+            initial_pick_lifts = [
+                pick_lift,
+                self._grasp_descent_nominal(height_guess),
+            ]
             drive_result = self.drive_to_feasible(
                 target_point, initial_pick_lifts, "drive_to_reach_target"
             )
@@ -584,8 +590,12 @@ class GeminiPickPlaceExecutor(Node):
         # Re-verify reachability and nudge the base again if needed.
         if execute and drive_enabled:
             pick_lift = float(self.get_parameter("pick_lift_m").value)
-            # Pick at target.z (no descent below it); pre-pick at target.z + lift.
-            corrected_pick_lifts = [pick_lift, 0.0]
+            # Pick at the true deepest point (target.z + nominal descent);
+            # pre-pick at target.z + lift.
+            corrected_pick_lifts = [
+                pick_lift,
+                self._grasp_descent_nominal(object_height),
+            ]
             drive_result2 = self.drive_to_feasible(
                 target_point,
                 corrected_pick_lifts,
@@ -2032,16 +2042,29 @@ class GeminiPickPlaceExecutor(Node):
                 return False
         return True
 
-    def _clamp_grasp_descent(self, target_point, object_height_m, table_z):
-        """Compute the pick offset relative to target.z. The base offset is
-        -grasp_z_offset_m: grasp at target.z (Gemini's bias-pixel projection,
-        typically the object's visible top), optionally lowered by
-        grasp_z_offset_m to reach a short object's body. The floor clamp can
-        still raise this when the resulting pick_z dips below
-        table_z + safety_margin. Returns the descent value (added to target.z;
-        negative = below the perceived surface); logs the clamp when triggered.
+    def _grasp_descent_nominal(self, object_height_m):
+        """Nominal (unclamped) pick descent added to target.z: the fingertip
+        descends grasp_z_fraction_from_top * object_height below the perceived
+        top so the jaws close around the body, plus the manual grasp_z_offset_m.
+        Negative = below the perceived surface. The table-floor clamp in
+        _clamp_grasp_descent can still raise the final pick above this.
         """
-        grasp_descent = -float(self.get_parameter("grasp_z_offset_m").value)
+        fraction = float(self.get_parameter("grasp_z_fraction_from_top").value)
+        manual = float(self.get_parameter("grasp_z_offset_m").value)
+        descent = -manual
+        if object_height_m is not None and object_height_m > 0.0 and fraction > 0.0:
+            descent -= float(object_height_m) * fraction
+        return descent
+
+    def _clamp_grasp_descent(self, target_point, object_height_m, table_z):
+        """Compute the pick offset relative to target.z (the object's
+        perceived top): the height-scaled auto-descent plus grasp_z_offset_m,
+        from _grasp_descent_nominal. The floor clamp can still raise this when
+        the resulting pick_z dips below table_z + safety_margin. Returns the
+        descent value (added to target.z; negative = below the perceived
+        surface); logs the clamp when triggered.
+        """
+        grasp_descent = self._grasp_descent_nominal(object_height_m)
         safety = float(self.get_parameter("pick_z_safety_m").value)
         pick_z_min = float(table_z) + safety
         pick_z_unclamped = float(target_point.point.z) + grasp_descent
@@ -2054,9 +2077,13 @@ class GeminiPickPlaceExecutor(Node):
                 f"{new_descent:.3f}"
             )
             grasp_descent = new_descent
+        fraction = float(self.get_parameter("grasp_z_fraction_from_top").value)
         self.get_logger().info(
-            f"grasp at target.z + {grasp_descent:.3f}m "
-            f"(object_height={object_height_m:.3f}m)"
+            f"grasp at target.z + {grasp_descent:.3f}m: "
+            f"z_top={float(target_point.point.z):.3f}, "
+            f"object_height={object_height_m:.3f}, fraction={fraction:.2f}, "
+            f"fingertip_z={float(target_point.point.z) + grasp_descent:.3f}, "
+            f"floor={pick_z_min:.3f}"
         )
         return grasp_descent
 
@@ -2165,7 +2192,10 @@ class GeminiPickPlaceExecutor(Node):
         drive_enabled = bool(self.get_parameter("enable_base_drive").value)
         if drive_enabled:
             pick_lift = float(self.get_parameter("pick_lift_m").value)
-            corrected_lifts = [pick_lift, 0.0]
+            corrected_lifts = [
+                pick_lift,
+                self._grasp_descent_nominal(object_height),
+            ]
             drive_result = self.drive_to_feasible(
                 target_point, corrected_lifts, "retry_drive_correction"
             )
