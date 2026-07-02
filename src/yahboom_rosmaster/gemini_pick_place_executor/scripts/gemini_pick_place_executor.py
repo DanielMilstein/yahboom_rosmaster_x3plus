@@ -177,14 +177,16 @@ class GeminiPickPlaceExecutor(Node):
         self.declare_parameter("home_named", "up")
         self.declare_parameter("gripper_open_named", "open")
         self.declare_parameter("gripper_closed_named", "close")
-        # Fingertip position in arm_link5's local frame. For the Yahboom X3 Plus
-        # arm, grip_joint origin in arm_link5 frame is (-0.0035, -0.0126, -0.0685),
-        # so the gripper extends along arm_link5's -Z. Fingertip is roughly
-        # 12 cm along -Z (gripper + finger length). For each candidate orientation
-        # Q, the wrist IK target is computed as
+        # Fingertip position in arm_link5's local frame: the gripper extends
+        # ~9 cm along arm_link5's +Z (magnitude tape-measured wrist->fingertip;
+        # direction confirmed on hardware 2026-07-02 by comparing FK of the
+        # actual joints against photos — with -0.09 the model placed the
+        # fingertip 9 cm BEHIND the flange, so the wrist was commanded 9 cm
+        # past the object and the real fingers overshot it). For each candidate
+        # orientation Q, the wrist IK target is computed as
         # `fingertip_target - R(Q) * gripper_tip_offset_xyz`, so the fingertip
         # lands on the perceived point regardless of orientation.
-        self.declare_parameter("gripper_tip_offset_xyz", [0.0, 0.0, -0.09])
+        self.declare_parameter("gripper_tip_offset_xyz", [0.0, 0.0, 0.09])
         self.declare_parameter("use_orientation_constraint", True)
         self.declare_parameter("top_down_yaw", 0.0)
         self.declare_parameter("planning_time", 5.0)
@@ -1304,9 +1306,9 @@ class GeminiPickPlaceExecutor(Node):
                 raise ValueError(f"expected 3 elements, got {len(tip_offset)}")
         except Exception as exc:
             self.get_logger().warn(
-                f"[{label}] invalid gripper_tip_offset_xyz ({exc}); using [0,0,-0.12]"
+                f"[{label}] invalid gripper_tip_offset_xyz ({exc}); using [0,0,0.09]"
             )
-            tip_offset = [0.0, 0.0, -0.12]
+            tip_offset = [0.0, 0.0, 0.09]
 
         self.get_logger().info(
             f"[{label}] fingertip target=({fx:.3f},{fy:.3f},{fz:.3f}) "
@@ -1528,9 +1530,9 @@ class GeminiPickPlaceExecutor(Node):
         except Exception as exc:
             self.get_logger().warn(
                 f"find_feasible_drive: invalid gripper_tip_offset_xyz ({exc}); "
-                "using [0,0,-0.12]"
+                "using [0,0,0.09]"
             )
-            tip_offset = [0.0, 0.0, -0.12]
+            tip_offset = [0.0, 0.0, 0.09]
 
         step = float(self.get_parameter("base_search_step_m").value)
         dx_range = list(self.get_parameter("base_search_dx_range_m").value)
@@ -2205,9 +2207,16 @@ class GeminiPickPlaceExecutor(Node):
             ("06_lift",
              lambda: self.plan_and_execute_pose(
                  self.top_down_pose(target_point, pick_lift), "06_lift")),
+            # Only strike the 'show' pose when Gemini verification will
+            # actually look at it — the pose can fail planning (the SRDF
+            # 'show' state self-collides base_link<->arm_link3 on hardware),
+            # and with verification disabled that failure aborted otherwise
+            # successful picks.
             ("06b_verify_show",
-             lambda: self.plan_and_execute_named_arm(
-                 verify_show_pose, "06b_verify_show")),
+             lambda: (self.plan_and_execute_named_arm(
+                 verify_show_pose, "06b_verify_show")
+                 if bool(self.get_parameter("verify_pick_with_gemini").value)
+                 else True)),
             ("06_verify_pick",
              lambda: self.run_verify_pick_step(target_label)),
         ]
