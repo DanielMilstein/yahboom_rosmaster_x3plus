@@ -30,6 +30,7 @@ FORWARDED_PARAMS = [
     ("base_search_order", "min_reach"),
     ("grasp_engage_depth_m", "0.03"),
     ("perception_attempts", "3"),
+    ("project_attempts", "4"),
     ("perception_retry_delay_sec", "1.0"),
     ("pose_correction_iters", "1"),
     ("pose_correction_tol_m", "0.012"),

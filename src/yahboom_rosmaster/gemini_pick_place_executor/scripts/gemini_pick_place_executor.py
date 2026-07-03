@@ -157,6 +157,10 @@ class GeminiPickPlaceExecutor(Node):
         # so re-perception always fails — dead-reckon through odom instead.
         self.declare_parameter("reperceive_after_drive", True)
         self.declare_parameter("project_timeout_sec", 3.0)
+        # Per-pixel projection retries (no Gemini re-call): covers a bad
+        # depth read / TF hiccup at the bridge, which answers with a NaN
+        # sentinel, and a lost request/response (timeout).
+        self.declare_parameter("project_attempts", 4)
         self.declare_parameter("service_timeout_sec", 10.0)
         self.declare_parameter("pick_lift_m", 0.06)
         self.declare_parameter("place_lift_m", 0.06)
@@ -1030,30 +1034,54 @@ class GeminiPickPlaceExecutor(Node):
         return True
 
     def project_pixel(self, name, pixel, frame_id):
-        self.base_point_event.clear()
-        self.latest_base_point = None
-
-        msg = PointStamped()
-        msg.header.stamp = self.get_clock().now().to_msg()
-        msg.header.frame_id = frame_id
-        msg.point.x = float(pixel[0])
-        msg.point.y = float(pixel[1])
-        msg.point.z = 0.0
-        self.pixel_pub.publish(msg)
-
+        """Ask the perception bridge to project one pixel to base frame.
+        Retried in place (fresh depth frames arrive continuously, so a bad
+        depth read or TF hiccup usually clears within a frame or two) —
+        much cheaper than failing the whole perception pass and re-calling
+        Gemini. The bridge answers failures with a NaN sentinel (reason on
+        the bridge's own log); a timeout means the request/response itself
+        was lost."""
+        attempts = max(1, int(self.get_parameter("project_attempts").value))
         timeout_sec = float(self.get_parameter("project_timeout_sec").value)
-        if not self.base_point_event.wait(timeout=timeout_sec):
-            self.get_logger().error(
-                f"Timed out waiting for projected {name} point from perception bridge"
-            )
-            return None
+        for i in range(attempts):
+            if i > 0:
+                time.sleep(0.3)
+            self.base_point_event.clear()
+            self.latest_base_point = None
 
-        point = deepcopy(self.latest_base_point)
-        self.get_logger().info(
-            f"{name} base point: frame={point.header.frame_id} "
-            f"x={point.point.x:.3f} y={point.point.y:.3f} z={point.point.z:.3f}"
+            msg = PointStamped()
+            msg.header.stamp = self.get_clock().now().to_msg()
+            msg.header.frame_id = frame_id
+            msg.point.x = float(pixel[0])
+            msg.point.y = float(pixel[1])
+            msg.point.z = 0.0
+            self.pixel_pub.publish(msg)
+
+            if not self.base_point_event.wait(timeout=timeout_sec):
+                self.get_logger().warn(
+                    f"Timed out waiting for projected {name} point "
+                    f"(attempt {i + 1}/{attempts})"
+                )
+                continue
+            point = deepcopy(self.latest_base_point)
+            if math.isnan(float(point.point.x)):
+                self.get_logger().warn(
+                    f"bridge could not project {name} pixel {pixel} "
+                    f"(attempt {i + 1}/{attempts}; reason on the bridge log "
+                    "— usually invalid depth at that pixel or a TF hiccup)"
+                )
+                continue
+            self.get_logger().info(
+                f"{name} base point: frame={point.header.frame_id} "
+                f"x={point.point.x:.3f} y={point.point.y:.3f} "
+                f"z={point.point.z:.3f}"
+            )
+            return point
+        self.get_logger().error(
+            f"projection of {name} pixel {pixel} failed after "
+            f"{attempts} attempts"
         )
-        return point
+        return None
 
     def publish_debug_markers(self, target_point, destination_point):
         markers = MarkerArray()

@@ -40,7 +40,10 @@ class PerceptionBridge(Node):
         self.declare_parameter("sync_slop", 0.08)
         self.declare_parameter("debug_pixel_u", -1)
         self.declare_parameter("debug_pixel_v", -1)
-        self.declare_parameter("depth_search_radius", 10)
+        # Spiral-search radius (px) for a valid depth around the requested
+        # pixel. 20 px: at the Astra's ~0.6 m minimum range the dropout
+        # patch around an object can exceed the old 10 px.
+        self.declare_parameter("depth_search_radius", 20)
         self.declare_parameter("override_intrinsics", False)
         self.declare_parameter("override_fx", 0.0)
         self.declare_parameter("override_fy", 0.0)
@@ -227,6 +230,17 @@ class PerceptionBridge(Node):
                 self.get_logger().warn(str(exc), throttle_duration_sec=2.0)
             else:
                 self.get_logger().warn(str(exc))
+            # Always answer the requester: a NaN sentinel unblocks the
+            # executor immediately (instead of a silent 3 s timeout) and
+            # tells it the failure was bridge-side (reason logged above).
+            if not throttle_errors:
+                failure = PointStamped()
+                failure.header.stamp = self.get_clock().now().to_msg()
+                failure.header.frame_id = self.base_frame
+                failure.point.x = float("nan")
+                failure.point.y = float("nan")
+                failure.point.z = float("nan")
+                self.base_point_pub.publish(failure)
             return None
 
         self.camera_point_pub.publish(camera_point)
