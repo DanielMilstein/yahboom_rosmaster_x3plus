@@ -329,6 +329,11 @@ class GeminiPickPlaceExecutor(Node):
         self.declare_parameter("stow_for_perception", True)
         self.declare_parameter("restow_after_place", True)
         self.declare_parameter("stow_settle_sec", 0.3)
+        # Full perception passes (Gemini + pixel projections) are retried on
+        # transient failures — depth holes at a projected pixel flicker frame
+        # to frame. Each attempt re-calls Gemini, so keep this small.
+        self.declare_parameter("perception_attempts", 3)
+        self.declare_parameter("perception_retry_delay_sec", 1.0)
         # Auto-reset after a failed pick-and-place: open gripper, drive base
         # back to the initial odom snapshot (= run-start position), park the
         # arm at the named SRDF pose. Lets the user re-run without manually
@@ -507,8 +512,12 @@ class GeminiPickPlaceExecutor(Node):
                 self.get_logger().error("could not stow arm; aborting")
                 return
 
-        perceived = self.perceive_targets()
+        perceived = self.perceive_targets_with_retries()
         if perceived is None:
+            self.get_logger().error(
+                "initial perception failed; sequence NOT started (node stays "
+                "idle — fix the scene/bridge and relaunch)"
+            )
             return
         image, plan, target_point, destination_point = perceived
         self.sanitize_destination_z(target_point, destination_point)
@@ -561,7 +570,9 @@ class GeminiPickPlaceExecutor(Node):
                 f"{destination_point.point.z:.3f})"
             )
             if reperceive:
-                perceived = self.perceive_targets(require_destination=False)
+                perceived = self.perceive_targets_with_retries(
+                    require_destination=False
+                )
                 if perceived is None:
                     return
                 # Use refreshed image/plan/target, but DISCARD the re-perceived destination.
@@ -697,6 +708,33 @@ class GeminiPickPlaceExecutor(Node):
                     )
                 except Exception as exc:
                     self.get_logger().warn(f"failure_reset_to_up: {exc}")
+
+    def perceive_targets_with_retries(self, require_destination=True):
+        """perceive_targets, retried. A single perception pass dies on any
+        transient: a depth hole at the target/destination pixel (the bridge
+        then never answers the projection and we time out), a rejected
+        Gemini response, a dropped service call. Depth holes flicker frame
+        to frame, so a fresh attempt usually succeeds. Each attempt re-calls
+        Gemini, so attempts are bounded (perception_attempts)."""
+        attempts = max(1, int(self.get_parameter("perception_attempts").value))
+        delay = float(self.get_parameter("perception_retry_delay_sec").value)
+        for i in range(attempts):
+            if i > 0:
+                self.get_logger().warn(
+                    f"perception attempt {i + 1}/{attempts} "
+                    f"(previous attempt failed)"
+                )
+                if delay > 0.0:
+                    time.sleep(delay)
+            perceived = self.perceive_targets(
+                require_destination=require_destination
+            )
+            if perceived is not None:
+                return perceived
+        self.get_logger().error(
+            f"perception failed after {attempts} attempts"
+        )
+        return None
 
     def perceive_targets(self, require_destination=True):
         """Full Gemini + projection pass. require_destination=False tolerates
@@ -2400,7 +2438,7 @@ class GeminiPickPlaceExecutor(Node):
             return None
         if not self.plan_and_execute_stow("retry_stow_for_reperception"):
             return None
-        perceived = self.perceive_targets(require_destination=False)
+        perceived = self.perceive_targets_with_retries(require_destination=False)
         if perceived is None:
             return None
         image, plan, target_point, _re_destination = perceived
