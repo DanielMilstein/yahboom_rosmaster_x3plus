@@ -233,6 +233,16 @@ class GeminiPickPlaceExecutor(Node):
         # target ends closest to the arm column (grasp mid-envelope, least
         # servo droop); "min_drive" is the legacy smallest-base-motion-first.
         self.declare_parameter("base_search_order", "min_reach")
+        # Side-grasp engagement depth. Perception (Gemini pixel + depth)
+        # returns a point on the object's NEAR face; a horizontal gripper
+        # whose fingertips stop there leaves the whole object beyond the
+        # tips and the jaws close on air (the grasp region runs from the
+        # tips back toward the palm). Advance the 04_pick fingertip target
+        # this far along the horizontal approach direction so the object
+        # body lands between the fingers. Applied only when
+        # grasp_tilt_first is set (side grasps); a top-down grasp centers
+        # via the bbox instead. ~object depth is a good value.
+        self.declare_parameter("grasp_engage_depth_m", 0.03)
         # After an arm pose executes, the joint readback + FK measure where
         # the fingertip actually ended up (servo droop under load shows here).
         # If the error exceeds the tolerance, re-target once with the error
@@ -2281,6 +2291,28 @@ class GeminiPickPlaceExecutor(Node):
         )
         grip_value = self.grasp_grip_joint(grasp_width_m)
 
+        # Perception hits the object's near face; for a side grasp, push the
+        # pick fingertip target past it along the horizontal approach so the
+        # body sits between the fingers (see grasp_engage_depth_m). Pre-pick
+        # and lift keep the unengaged point, so the descent approaches the
+        # object diagonally from behind-above.
+        pick_target = target_point
+        engage = float(self.get_parameter("grasp_engage_depth_m").value)
+        if engage > 0.0 and bool(self.get_parameter("grasp_tilt_first").value):
+            arm_x = float(self.get_parameter("arm_base_offset_x_m").value)
+            yaw = math.atan2(
+                float(target_point.point.y),
+                float(target_point.point.x) - arm_x,
+            )
+            pick_target = deepcopy(target_point)
+            pick_target.point.x += engage * math.cos(yaw)
+            pick_target.point.y += engage * math.sin(yaw)
+            self.get_logger().info(
+                f"side-grasp engagement: pick target advanced {engage:.3f}m "
+                f"along approach to ({pick_target.point.x:.3f},"
+                f"{pick_target.point.y:.3f})"
+            )
+
         steps = [
             ("01_home", lambda: self.plan_and_execute_named_arm(home, "01_home")),
             ("02_open_gripper",
@@ -2290,7 +2322,7 @@ class GeminiPickPlaceExecutor(Node):
                  self.top_down_pose(target_point, pick_lift), "03_pre_pick")),
             ("04_pick",
              lambda: self.plan_and_execute_pose(
-                 self.top_down_pose(target_point, grasp_descent), "04_pick")),
+                 self.top_down_pose(pick_target, grasp_descent), "04_pick")),
             ("05_close_gripper",
              lambda: self._close_gripper_until_contact("05_close_gripper")),
             ("06_lift",

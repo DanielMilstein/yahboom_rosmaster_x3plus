@@ -26,6 +26,7 @@ FORWARDED_PARAMS = [
     ("grasp_roll_offset_rad", "0.0"),
     ("grasp_tilt_first", "false"),
     ("base_search_order", "min_reach"),
+    ("grasp_engage_depth_m", "0.03"),
     ("pose_correction_iters", "1"),
     ("pose_correction_tol_m", "0.012"),
     ("table_z_source", "perception"),
