@@ -823,39 +823,56 @@ class GeminiPickPlaceExecutor(Node):
         yspan = ymax - ymin
         if yspan <= 0:
             return None, None, None
-        inset = 0.08 * yspan
-        top_y = ymin + inset
-        bottom_y = ymax - inset
         x_mid = 0.5 * (xmin + xmax)
-        top_pixel = normalized_point_to_pixel(
-            [top_y, x_mid], image.width, image.height
-        )
+        bottom_y = ymax - 0.08 * yspan
         bottom_pixel = normalized_point_to_pixel(
             [bottom_y, x_mid], image.width, image.height
         )
-        top_pt = self.project_pixel("box_top", top_pixel, image.header.frame_id)
-        bottom_pt = self.project_pixel("box_bottom", bottom_pixel, image.header.frame_id)
-        if top_pt is None or bottom_pt is None:
+        bottom_pt = self.project_pixel(
+            "box_bottom", bottom_pixel, image.header.frame_id
+        )
+        if bottom_pt is None:
             return None, None, None
-        z_top = float(top_pt.point.z)
         z_bottom = float(bottom_pt.point.z)
-        height = z_top - z_bottom
-        xy_spread = math.hypot(
-            float(top_pt.point.x) - float(bottom_pt.point.x),
-            float(top_pt.point.y) - float(bottom_pt.point.y),
-        )
-        if height < 0.02 or height > 0.30 or xy_spread > 0.08:
-            self.get_logger().warn(
-                f"measure_object_extent rejected: z_top={z_top:.3f} "
-                f"z_bottom={z_bottom:.3f} height={height:.3f}m "
-                f"xy_spread={xy_spread:.3f}m; falling back"
+        # Sample the top at increasing insets: at a shallow viewing angle the
+        # 8%-inset ray can graze the object's top edge and land on the table
+        # BEHIND it (z_top < z_bottom, huge xy_spread). A deeper inset lands
+        # on the object face; height is then slightly under-read, which the
+        # grasp math tolerates far better than the full fallback.
+        for top_inset in (0.08, 0.25, 0.40):
+            top_y = ymin + top_inset * yspan
+            top_pixel = normalized_point_to_pixel(
+                [top_y, x_mid], image.width, image.height
             )
-            return None, None, None
-        self.get_logger().info(
-            f"Measured object extent: z_top={z_top:.3f} z_bottom={z_bottom:.3f} "
-            f"height={height:.3f}m"
+            top_pt = self.project_pixel(
+                "box_top", top_pixel, image.header.frame_id
+            )
+            if top_pt is None:
+                continue
+            z_top = float(top_pt.point.z)
+            height = z_top - z_bottom
+            xy_spread = math.hypot(
+                float(top_pt.point.x) - float(bottom_pt.point.x),
+                float(top_pt.point.y) - float(bottom_pt.point.y),
+            )
+            if height < 0.02 or height > 0.30 or xy_spread > 0.08:
+                self.get_logger().warn(
+                    f"measure_object_extent rejected at top_inset="
+                    f"{top_inset:.2f}: z_top={z_top:.3f} "
+                    f"z_bottom={z_bottom:.3f} height={height:.3f}m "
+                    f"xy_spread={xy_spread:.3f}m"
+                )
+                continue
+            self.get_logger().info(
+                f"Measured object extent (top_inset={top_inset:.2f}): "
+                f"z_top={z_top:.3f} z_bottom={z_bottom:.3f} "
+                f"height={height:.3f}m"
+            )
+            return z_top, height, z_bottom
+        self.get_logger().warn(
+            "measure_object_extent: all top insets rejected; falling back"
         )
-        return z_top, height, z_bottom
+        return None, None, None
 
     def destination_point_2d(self, plan):
         destination = plan["destination"]

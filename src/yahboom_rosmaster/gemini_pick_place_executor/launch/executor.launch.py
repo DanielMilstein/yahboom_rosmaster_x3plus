@@ -16,7 +16,9 @@ FORWARDED_PARAMS = [
     ("task", "put the red can in the blue bin"),
     ("pick_lift_m", "0.06"),
     ("place_lift_m", "0.06"),
-    ("object_height_fallback_m", "0.10"),
+    # Scene object is the 30 mm cube; the old 0.10 fallback produced a
+    # nonsense 5 cm auto-descent whenever the extent measurement failed.
+    ("object_height_fallback_m", "0.04"),
     ("grasp_z_fraction_from_top", "0.5"),
     # Descend below the perceived (top-surface) target.z to grip a short
     # object's body. 0.0 = sim default; hardware small objects want ~0.02.
@@ -30,7 +32,11 @@ FORWARDED_PARAMS = [
     ("pose_correction_iters", "1"),
     ("pose_correction_tol_m", "0.012"),
     ("table_z_source", "perception"),
-    ("table_z_m", "0.14"),
+    # Real Prusa bed surface height above base_footprint (tape-measured
+    # 2026-07-02). The old 0.14 default let the floor clamp command
+    # fingertips BELOW the bed when the extent measurement fell back,
+    # hooking the bed edge on retreat.
+    ("table_z_m", "0.16"),
     ("pick_z_safety_m", "0.10"),
     ("verify_pick_with_gemini", "true"),
     ("verify_pick_required", "true"),
