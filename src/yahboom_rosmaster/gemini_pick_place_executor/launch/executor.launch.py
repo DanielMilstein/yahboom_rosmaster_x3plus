@@ -25,6 +25,9 @@ FORWARDED_PARAMS = [
     # default; hardware grasps that come out one-up/one-down want ~1.5708.
     ("grasp_roll_offset_rad", "0.0"),
     ("grasp_tilt_first", "false"),
+    ("base_search_order", "min_reach"),
+    ("pose_correction_iters", "1"),
+    ("pose_correction_tol_m", "0.012"),
     ("table_z_source", "perception"),
     ("table_z_m", "0.14"),
     ("pick_z_safety_m", "0.10"),

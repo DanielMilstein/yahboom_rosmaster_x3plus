@@ -229,6 +229,16 @@ class GeminiPickPlaceExecutor(Node):
         # level at the can's base). With "param", we use table_z_m directly.
         self.declare_parameter("table_z_source", "perception")
         self.declare_parameter("table_z_m", 0.14)
+        # Base-search candidate ordering: "min_reach" (default) drives so the
+        # target ends closest to the arm column (grasp mid-envelope, least
+        # servo droop); "min_drive" is the legacy smallest-base-motion-first.
+        self.declare_parameter("base_search_order", "min_reach")
+        # After an arm pose executes, the joint readback + FK measure where
+        # the fingertip actually ended up (servo droop under load shows here).
+        # If the error exceeds the tolerance, re-target once with the error
+        # subtracted, up to this many iterations. 0 disables.
+        self.declare_parameter("pose_correction_iters", 1)
+        self.declare_parameter("pose_correction_tol_m", 0.012)
         # Generous default: 1-2 cm for perception z_bottom over-reading the
         # actual table when the bbox is small, ~6 cm for the tip-offset
         # modeling error on this gripper, ~2 cm true clearance.
@@ -1027,6 +1037,7 @@ class GeminiPickPlaceExecutor(Node):
             self.get_logger().error(f"[{label}] plan result has no trajectory")
             return False
         self.get_logger().info(f"[{label}] plan ok, executing on '{group_name}'")
+        self._last_fk_fingertip = None
         status = self.moveit.execute(group_name, trajectory)
         # moveit_py's execute() is asynchronous and frequently returns with
         # status RUNNING before the controller actually finishes, especially
@@ -1142,6 +1153,7 @@ class GeminiPickPlaceExecutor(Node):
                 f"[{label}] FK(actual joints): flange=({px:.3f},{py:.3f},{pz:.3f}) "
                 f"fingertip=({fx:.3f},{fy:.3f},{fz:.3f}) (URDF root frame)"
             )
+            self._last_fk_fingertip = (fx, fy, fz)
         except Exception as exc:  # noqa: BLE001
             self.get_logger().warn(f"[{label}] joint readback FK failed: {exc}")
 
@@ -1281,6 +1293,48 @@ class GeminiPickPlaceExecutor(Node):
         return None
 
     def plan_and_execute_pose(self, pose_stamped, label):
+        """Execute a fingertip pose, then close the loop on servo droop: the
+        joint readback + FK report where the fingertip actually ended up; if
+        it's off by more than pose_correction_tol_m, re-target once with the
+        measured error subtracted (biasing the command high/forward so the
+        sagged pose lands on the true target)."""
+        ok = self._plan_and_execute_pose_once(pose_stamped, label)
+        if not ok:
+            return False
+        iters = int(self.get_parameter("pose_correction_iters").value)
+        tol = float(self.get_parameter("pose_correction_tol_m").value)
+        tx = float(pose_stamped.pose.position.x)
+        ty = float(pose_stamped.pose.position.y)
+        tz = float(pose_stamped.pose.position.z)
+        for i in range(max(0, iters)):
+            fk = getattr(self, "_last_fk_fingertip", None)
+            if fk is None:
+                break
+            ex, ey, ez = fk[0] - tx, fk[1] - ty, fk[2] - tz
+            err = math.sqrt(ex * ex + ey * ey + ez * ez)
+            if err <= tol:
+                break
+            corrected = deepcopy(pose_stamped)
+            corrected.pose.position.x = tx - ex
+            corrected.pose.position.y = ty - ey
+            corrected.pose.position.z = tz - ez
+            self.get_logger().info(
+                f"[{label}] droop correction #{i + 1}: fingertip error "
+                f"({ex:+.3f},{ey:+.3f},{ez:+.3f}) |{err:.3f}|m > {tol:.3f}m; "
+                f"re-targeting at ({corrected.pose.position.x:.3f},"
+                f"{corrected.pose.position.y:.3f},{corrected.pose.position.z:.3f})"
+            )
+            if not self._plan_and_execute_pose_once(
+                corrected, f"{label}_corr{i + 1}"
+            ):
+                self.get_logger().warn(
+                    f"[{label}] droop correction failed to plan/execute; "
+                    "keeping the uncorrected pose"
+                )
+                break
+        return True
+
+    def _plan_and_execute_pose_once(self, pose_stamped, label):
         if self.arm_component is None or self.moveit is None:
             self.get_logger().error(f"[{label}] MoveItPy not initialized")
             return False
@@ -1568,10 +1622,25 @@ class GeminiPickPlaceExecutor(Node):
             dx_values = make_range(dx_range[0], dx_range[1], step)
             dy_values = make_range(dy_range[0], dy_range[1], step)
 
-        # Order candidates by ascending distance from (0, 0).
+        # Candidate ordering. "min_drive" (legacy) tries the smallest base
+        # motion first — but with a truthful arm model that tends to accept
+        # dx=0 with the target at maximum extension, where servo droop and
+        # reach margin are worst. "min_reach" (default) prefers the drive
+        # that leaves the target closest to the arm column, so the grasp
+        # happens mid-envelope; ties break toward the smaller drive.
+        order = str(self.get_parameter("base_search_order").value).lower()
+        arm_x = float(self.get_parameter("arm_base_offset_x_m").value)
+        tx = float(point.point.x)
+        ty = float(point.point.y)
+        if order == "min_drive":
+            key = lambda d: d[0] * d[0] + d[1] * d[1]  # noqa: E731
+        else:
+            key = lambda d: (  # noqa: E731
+                (tx - d[0] - arm_x) ** 2 + (ty - d[1]) ** 2,
+                d[0] * d[0] + d[1] * d[1],
+            )
         candidates = sorted(
-            ((dx, dy) for dx in dx_values for dy in dy_values),
-            key=lambda d: d[0] * d[0] + d[1] * d[1],
+            ((dx, dy) for dx in dx_values for dy in dy_values), key=key
         )
 
         # Pre-compute orientation list once per (dx, dy) since it depends on (fx_hypo, fy_hypo).
