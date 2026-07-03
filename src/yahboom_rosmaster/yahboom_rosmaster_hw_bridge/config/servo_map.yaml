@@ -1,9 +1,13 @@
 # Yahboom ROSMaster X3 Plus servo ID map.
 #
-# Phase 0: placeholder values. Real IDs must be filled in during Phase 1
-# from Yahboom's documentation or by probing on the Orin (Rosmaster_Lib
-# uses servo IDs 1..N; the X3 Plus arm convention is typically id=1 at
-# the base joint and increasing distally, with the gripper at id=6).
+# CALIBRATED 2026-07-03. The arm's UART bus servos travel 0-180 deg with
+# 90 deg = joint zero, so each joint spans -pi/2..+pi/2 rad. The earlier
+# placeholder values mapped the URDF's fictional +/-2 / +/-2.5 rad limits
+# onto 0-180 deg, which silently scaled every commanded angle down to
+# ~79% (joints 1-2) / ~63% (joints 3-4) of the requested motion — and the
+# readback inverted through the same wrong map, so /joint_states reported
+# the commanded value while the physical arm under-articulated (grasp
+# landed high and short; caught by FK-vs-tape comparison on hardware).
 #
 # Each joint maps to:
 #   id:           UART servo ID on the STM32 bus
@@ -18,28 +22,28 @@
 joints:
   arm_joint1:
     id: 1
-    open_rad: -2
-    close_rad: 2
+    open_rad: -1.5708
+    close_rad: 1.5708
     invert: false
   arm_joint2:
     id: 2
-    open_rad: -2
-    close_rad: 2
+    open_rad: -1.5708
+    close_rad: 1.5708
     invert: false
   arm_joint3:
     id: 3
-    open_rad: -2.5
-    close_rad: 2.5
+    open_rad: -1.5708
+    close_rad: 1.5708
     invert: false
   arm_joint4:
     id: 4
-    open_rad: -2.5
-    close_rad: 2.5
+    open_rad: -1.5708
+    close_rad: 1.5708
     invert: false
   arm_joint5:
     id: 5
-    open_rad: -2
-    close_rad: 3.14159
+    open_rad: -1.5708
+    close_rad: 1.5708
     invert: false
   grip_joint:
     id: 6
