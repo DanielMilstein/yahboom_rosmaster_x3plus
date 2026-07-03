@@ -551,7 +551,7 @@ class GeminiPickPlaceExecutor(Node):
                 f"{destination_point.point.z:.3f})"
             )
             if reperceive:
-                perceived = self.perceive_targets()
+                perceived = self.perceive_targets(require_destination=False)
                 if perceived is None:
                     return
                 # Use refreshed image/plan/target, but DISCARD the re-perceived destination.
@@ -688,7 +688,12 @@ class GeminiPickPlaceExecutor(Node):
                 except Exception as exc:
                     self.get_logger().warn(f"failure_reset_to_up: {exc}")
 
-    def perceive_targets(self):
+    def perceive_targets(self, require_destination=True):
+        """Full Gemini + projection pass. require_destination=False tolerates
+        a failed/timed-out destination projection (returned as None) — the
+        re-perception paths discard the re-perceived destination anyway and
+        keep the dead-reckoned one, so its projection failing must not abort
+        the retry."""
         image = deepcopy(self.latest_image)
         if image is None:
             self.get_logger().warn("No image available")
@@ -730,7 +735,7 @@ class GeminiPickPlaceExecutor(Node):
         destination_point = self.project_pixel(
             "destination", destination_pixel, image.header.frame_id
         )
-        if destination_point is None:
+        if destination_point is None and require_destination:
             return None
 
         return image, plan, target_point, destination_point
@@ -909,6 +914,21 @@ class GeminiPickPlaceExecutor(Node):
             self.get_logger().error("Verify service call did not return a response")
             return None
         return future.result()
+
+    def _verify_show_step(self, verify_show_pose):
+        """Strike the 'show' pose before Gemini pick verification. Skipped
+        when verification is off; NON-FATAL when the pose can't be planned
+        (the SRDF 'show' state trips a base_link<->arm_link3 collision in
+        the model on hardware) — verification then just uses the current
+        (post-lift) view instead of aborting an already-lifted pick."""
+        if not bool(self.get_parameter("verify_pick_with_gemini").value):
+            return True
+        if not self.plan_and_execute_named_arm(verify_show_pose, "06b_verify_show"):
+            self.get_logger().warn(
+                "06b_verify_show: 'show' pose unplannable; verifying from "
+                "the current pose instead"
+            )
+        return True
 
     def run_verify_pick_step(self, target_label):
         if not bool(self.get_parameter("verify_pick_with_gemini").value):
@@ -2277,15 +2297,14 @@ class GeminiPickPlaceExecutor(Node):
              lambda: self.plan_and_execute_pose(
                  self.top_down_pose(target_point, pick_lift), "06_lift")),
             # Only strike the 'show' pose when Gemini verification will
-            # actually look at it — the pose can fail planning (the SRDF
-            # 'show' state self-collides base_link<->arm_link3 on hardware),
-            # and with verification disabled that failure aborted otherwise
-            # successful picks.
+            # actually look at it. Best-effort either way: the SRDF 'show'
+            # state fails planning on hardware (model finds a
+            # base_link<->arm_link3 collision), and aborting a pick that
+            # already lifted the object just because the presentation pose
+            # is unplannable throws away a success — verify from the lift
+            # pose instead.
             ("06b_verify_show",
-             lambda: (self.plan_and_execute_named_arm(
-                 verify_show_pose, "06b_verify_show")
-                 if bool(self.get_parameter("verify_pick_with_gemini").value)
-                 else True)),
+             lambda: self._verify_show_step(verify_show_pose)),
             ("06_verify_pick",
              lambda: self.run_verify_pick_step(target_label)),
         ]
@@ -2332,7 +2351,7 @@ class GeminiPickPlaceExecutor(Node):
             return None
         if not self.plan_and_execute_stow("retry_stow_for_reperception"):
             return None
-        perceived = self.perceive_targets()
+        perceived = self.perceive_targets(require_destination=False)
         if perceived is None:
             return None
         image, plan, target_point, _re_destination = perceived
