@@ -237,6 +237,15 @@ class GeminiPickPlaceExecutor(Node):
         # target ends closest to the arm column (grasp mid-envelope, least
         # servo droop); "min_drive" is the legacy smallest-base-motion-first.
         self.declare_parameter("base_search_order", "min_reach")
+        # Horizontal distance from the arm column where the grasp is most
+        # comfortable (mid-envelope). min_reach ordering aims the drive here.
+        self.declare_parameter("base_search_ideal_reach_m", 0.33)
+        # When reperceive_after_drive is set, cap the FIRST drive so the
+        # target stays at least this far ahead (x, base frame) — outside the
+        # depth camera's ~0.6 m minimum-range blind zone — so the post-drive
+        # re-perception can actually see it. The corrected drive then closes
+        # the remaining distance with fresh, close-range perception.
+        self.declare_parameter("reperceive_min_target_x_m", 0.55)
         # Side-grasp engagement depth. Perception (Gemini pixel + depth)
         # returns a point on the object's NEAR face; a horizontal gripper
         # whose fingertips stop there leaves the whole object beyond the
@@ -250,8 +259,10 @@ class GeminiPickPlaceExecutor(Node):
         # After an arm pose executes, the joint readback + FK measure where
         # the fingertip actually ended up (servo droop under load shows here).
         # If the error exceeds the tolerance, re-target once with the error
-        # subtracted, up to this many iterations. 0 disables.
-        self.declare_parameter("pose_correction_iters", 1)
+        # subtracted, up to this many iterations. 0 disables. Two iterations:
+        # sagging servos deliver only a fraction of each correction (observed
+        # +5 mm of a +27 mm request), so one pass leaves a residual.
+        self.declare_parameter("pose_correction_iters", 2)
         self.declare_parameter("pose_correction_tol_m", 0.012)
         # Generous default: 1-2 cm for perception z_bottom over-reading the
         # actual table when the bbox is small, ~6 cm for the tip-offset
@@ -555,8 +566,24 @@ class GeminiPickPlaceExecutor(Node):
                 pick_lift,
                 self._grasp_descent_nominal(height_guess),
             ]
+            # With re-perception enabled, stop the first drive while the
+            # target is still visible to the depth camera (outside its
+            # min-range blind zone); the corrected drive after re-perceiving
+            # closes the rest with fresh close-range data instead of
+            # dead-reckoning the whole approach.
+            initial_max_dx = None
+            if reperceive:
+                min_tx = float(
+                    self.get_parameter("reperceive_min_target_x_m").value
+                )
+                initial_max_dx = max(
+                    0.0, float(target_point.point.x) - min_tx
+                )
             drive_result = self.drive_to_feasible(
-                target_point, initial_pick_lifts, "drive_to_reach_target"
+                target_point,
+                initial_pick_lifts,
+                "drive_to_reach_target",
+                max_dx=initial_max_dx,
             )
             if not drive_result:
                 self.get_logger().error("base drive failed; aborting")
@@ -1483,7 +1510,14 @@ class GeminiPickPlaceExecutor(Node):
         )
 
         candidates = self.candidate_orientations(fx, fy)
-        for idx, (qx, qy, qz, qw) in enumerate(candidates):
+        # Try the orientation the base search already validated first —
+        # every failed candidate here costs ik_timeout_sec x len(_IK_SEEDS)
+        # (~20 s), and the search's winner almost always solves.
+        ordered = list(enumerate(candidates))
+        preferred = getattr(self, "_preferred_orient_idx", None)
+        if preferred is not None and 0 < preferred < len(ordered):
+            ordered.insert(0, ordered.pop(preferred))
+        for idx, (qx, qy, qz, qw) in ordered:
             ox, oy, oz = rotate_vector_by_quat(tip_offset, qx, qy, qz, qw)
             wx = fx - ox
             wy = fy - oy
@@ -1661,7 +1695,7 @@ class GeminiPickPlaceExecutor(Node):
         msg.header.frame_id = "base_link"
         self.cmd_vel_pub.publish(msg)
 
-    def find_feasible_drive_for_point(self, point, lift_zs):
+    def find_feasible_drive_for_point(self, point, lift_zs, max_dx=None):
         """Search candidate base displacements (dx, dy) for one where arm IK is
         feasible AND collision-free at every fingertip target
         (point.x, point.y, point.z + lift) for each lift in `lift_zs`.
@@ -1735,21 +1769,30 @@ class GeminiPickPlaceExecutor(Node):
             dx_values = make_range(dx_range[0], dx_range[1], step)
             dy_values = make_range(dy_range[0], dy_range[1], step)
 
+        # Optional cap on the forward drive (e.g. keep the target outside
+        # the camera's blind zone so a post-drive re-perception can see it).
+        if max_dx is not None:
+            dx_values = [v for v in dx_values if v <= max_dx + 1e-9]
+            if not dx_values:
+                dx_values = [max(0.0, float(max_dx))]
         # Candidate ordering. "min_drive" (legacy) tries the smallest base
-        # motion first — but with a truthful arm model that tends to accept
-        # dx=0 with the target at maximum extension, where servo droop and
-        # reach margin are worst. "min_reach" (default) prefers the drive
-        # that leaves the target closest to the arm column, so the grasp
-        # happens mid-envelope; ties break toward the smaller drive.
+        # motion first. "min_reach" (default) prefers the drive that leaves
+        # the target closest to the arm's IDEAL reach (mid-envelope: least
+        # droop, best margin) — NOT closest to the column: with a long drive
+        # budget, aiming for zero distance parks the target at unreachable
+        # candidates first and the search grinds through the whole grid.
         order = str(self.get_parameter("base_search_order").value).lower()
         arm_x = float(self.get_parameter("arm_base_offset_x_m").value)
+        ideal = float(self.get_parameter("base_search_ideal_reach_m").value)
         tx = float(point.point.x)
         ty = float(point.point.y)
         if order == "min_drive":
             key = lambda d: d[0] * d[0] + d[1] * d[1]  # noqa: E731
         else:
             key = lambda d: (  # noqa: E731
-                (tx - d[0] - arm_x) ** 2 + (ty - d[1]) ** 2,
+                abs(
+                    math.hypot(tx - d[0] - arm_x, ty - d[1]) - ideal
+                ),
                 d[0] * d[0] + d[1] * d[1],
             )
         candidates = sorted(
@@ -1808,6 +1851,10 @@ class GeminiPickPlaceExecutor(Node):
                         f"orient #{orient_idx} after {cand_idx + 1} candidates "
                         f"(lifts={[round(l, 3) for l in lifts]})"
                     )
+                    # Remember which orientation the search validated so the
+                    # pick-time candidate loop tries it FIRST — each failed
+                    # candidate there costs ik_timeout_sec x len(_IK_SEEDS).
+                    self._preferred_orient_idx = orient_idx
                     return dx, dy, orient_idx
         self.get_logger().warn(
             f"find_feasible_drive: no feasible offset in {len(candidates)} candidates "
@@ -1817,10 +1864,10 @@ class GeminiPickPlaceExecutor(Node):
         )
         return None
 
-    def drive_to_feasible(self, point, lift_z, label):
+    def drive_to_feasible(self, point, lift_z, label, max_dx=None):
         # Accept a scalar or an iterable of lifts; the search requires all
         # requested lifts to be feasible & collision-free at the same orientation.
-        result = self.find_feasible_drive_for_point(point, lift_z)
+        result = self.find_feasible_drive_for_point(point, lift_z, max_dx=max_dx)
         if result is None:
             self.get_logger().error(
                 f"[{label}] no feasible base offset found in search range"
