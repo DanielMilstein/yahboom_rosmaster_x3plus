@@ -563,6 +563,11 @@ class GeminiPickPlaceExecutor(Node):
                 self.get_logger().error("could not stow arm; aborting")
                 return
 
+        # Anchor scan at the start pose: the failure-reset return refines
+        # against this to land back on the exact start spot (the odometry
+        # return alone accumulates the whole excursion's error).
+        self._start_scan_anchor = self._lidar_scan_points()
+
         perceived = self.perceive_targets_with_retries()
         if perceived is None:
             self.get_logger().error(
@@ -2318,7 +2323,52 @@ class GeminiPickPlaceExecutor(Node):
         self.get_logger().info(
             f"drive_back_to: returning by base-frame ({dx_base:.3f},{dy_base:.3f})"
         )
-        return self.drive_relative_base(dx_base, dy_base)
+        ok = self.drive_relative_base(dx_base, dy_base)
+        if ok:
+            self._lidar_return_to_anchor()
+        return ok
+
+    def _lidar_return_to_anchor(self):
+        """Absolute return-to-start refinement. The odometry-based return
+        accumulates the whole excursion's error — including the motion the
+        per-drive lidar corrections added physically, which odometry never
+        recorded — so the robot lands off its start spot. Scan-matching the
+        current view against the anchor scan captured at run start measures
+        the absolute offset from the start pose directly; drive it out (up
+        to two refinement passes)."""
+        anchor = getattr(self, "_start_scan_anchor", None)
+        if anchor is None or not bool(
+            self.get_parameter("lidar_drive_correction").value
+        ):
+            return
+        for i in range(2):
+            time.sleep(0.3)
+            pts_now = self._lidar_scan_points()
+            if pts_now is None:
+                return
+            match = self._scan_match(anchor, pts_now, 0.0, 0.0)
+            if match is None:
+                self.get_logger().warn(
+                    "return-to-anchor: scan match unreliable; leaving the "
+                    "odometry-based return as-is"
+                )
+                return
+            dx, dy, dyaw, rms, n_pairs = match
+            err = math.hypot(dx, dy)
+            self.get_logger().info(
+                f"return-to-anchor pass {i + 1}: offset from start "
+                f"({dx:+.3f}, {dy:+.3f}, dyaw={math.degrees(dyaw):+.1f}°) "
+                f"rms={rms:.3f} pairs={n_pairs}"
+            )
+            if err <= 0.015:
+                return
+            if rms > 0.035 or n_pairs < 100 or err > 0.15:
+                self.get_logger().warn(
+                    "return-to-anchor: low-confidence or oversized offset; "
+                    "not correcting"
+                )
+                return
+            self.drive_relative_base(-dx, -dy)
 
     def plan_and_execute_gripper_value(self, grip_joint_rad, label):
         if self.gripper_component is None or self.moveit is None:
