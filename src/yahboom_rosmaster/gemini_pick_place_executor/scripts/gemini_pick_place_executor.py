@@ -15,7 +15,7 @@ from control_msgs.action import FollowJointTrajectory
 from geometry_msgs.msg import PointStamped, PoseStamped, TwistStamped
 from moveit_msgs.msg import Constraints, OrientationConstraint, PositionConstraint
 from nav_msgs.msg import Odometry
-from sensor_msgs.msg import Image, JointState
+from sensor_msgs.msg import Image, JointState, LaserScan
 from shape_msgs.msg import SolidPrimitive
 from std_msgs.msg import ColorRGBA
 from trajectory_msgs.msg import JointTrajectoryPoint
@@ -246,6 +246,23 @@ class GeminiPickPlaceExecutor(Node):
         # re-perception can actually see it. The corrected drive then closes
         # the remaining distance with fresh, close-range perception.
         self.declare_parameter("reperceive_min_target_x_m", 0.55)
+        # Lidar scan-match drive audit. Before/after each base drive the
+        # full scan (front + sides — no flat-landmark assumption; the thing
+        # ahead is a 3D printer) is ICP-matched to measure the TRUE planar
+        # motion (dx, dy, dyaw) and log the disagreement with wheel-odometry
+        # dead reckoning. Observe-only unless lidar_drive_correction is set.
+        self.declare_parameter("scan_topic", "/scan")
+        self.declare_parameter("lidar_audit", True)
+        self.declare_parameter("lidar_min_range_m", 0.25)
+        self.declare_parameter("lidar_max_range_m", 2.5)
+        self.declare_parameter("lidar_match_gate_m", 0.08)
+        # Phase B: apply one follow-up drive covering the measured shortfall
+        # when the mismatch exceeds the tolerance. Enable only after audited
+        # runs show ~5 mm repeatability. Corrections are capped, and skipped
+        # when the match is low-confidence or reports a large rotation.
+        self.declare_parameter("lidar_drive_correction", False)
+        self.declare_parameter("lidar_correction_tol_m", 0.01)
+        self.declare_parameter("lidar_correction_max_m", 0.05)
         # Side-grasp engagement depth. Perception (Gemini pixel + depth)
         # returns a point on the object's NEAR face; a horizontal gripper
         # whose fingertips stop there leaves the whole object beyond the
@@ -381,6 +398,14 @@ class GeminiPickPlaceExecutor(Node):
         self.joint_state_sub = self.create_subscription(
             JointState, joint_states_topic, self.joint_state_callback, 10
         )
+        self.latest_scan = None
+        self._lidar_warned = False
+        self.scan_sub = self.create_subscription(
+            LaserScan,
+            str(self.get_parameter("scan_topic").value),
+            self.scan_callback,
+            5,
+        )
         self.pixel_pub = self.create_publisher(PointStamped, pixel_topic, 10)
         marker_qos = QoSProfile(
             reliability=ReliabilityPolicy.RELIABLE,
@@ -444,6 +469,9 @@ class GeminiPickPlaceExecutor(Node):
 
     def joint_state_callback(self, msg):
         self.latest_joint_state = msg
+
+    def scan_callback(self, msg):
+        self.latest_scan = msg
 
     def _get_joint_position(self, name):
         msg = self.latest_joint_state
@@ -1864,6 +1892,134 @@ class GeminiPickPlaceExecutor(Node):
         )
         return None
 
+    def _lidar_scan_points(self):
+        """Latest lidar scan as base-frame xy points (the lidar sits at the
+        base xy origin per the URDF, so polar->xy needs no offset). Returns
+        an (N,2) numpy array or None (no scan / audit disabled)."""
+        if not bool(self.get_parameter("lidar_audit").value):
+            return None
+        scan = self.latest_scan
+        if scan is None:
+            if not self._lidar_warned:
+                self.get_logger().warn(
+                    "lidar_audit enabled but no scan received on "
+                    f"{self.get_parameter('scan_topic').value} — drive "
+                    "audit disabled for this run (is the driver up? "
+                    "use_lidar:=true in hardware_moveit.launch.py)"
+                )
+                self._lidar_warned = True
+            return None
+        import numpy as np
+
+        rmin = float(self.get_parameter("lidar_min_range_m").value)
+        rmax = float(self.get_parameter("lidar_max_range_m").value)
+        r = np.asarray(scan.ranges, dtype=float)
+        th = scan.angle_min + scan.angle_increment * np.arange(len(r))
+        good = np.isfinite(r) & (r >= rmin) & (r <= rmax)
+        r, th = r[good], th[good]
+        if len(r) < 30:
+            return None
+        pts = np.stack([r * np.cos(th), r * np.sin(th)], axis=1)
+        if len(pts) > 400:
+            pts = pts[:: len(pts) // 400 + 1]
+        return pts
+
+    def _scan_match(self, pts_before, pts_after, guess_dx, guess_dy):
+        """Estimate the robot's true planar motion between two scans via a
+        small point-to-point ICP seeded with the odometry delta. A static
+        point seen at p_before appears after a motion (R, t) at
+        p_after = R^-1 (p_before - t), so aligning R·p_after + t onto
+        pts_before recovers (t=translation, R=yaw). Returns
+        (dx, dy, dyaw, rms, n_pairs) or None when the match is unreliable
+        (too few gated correspondences)."""
+        import numpy as np
+
+        gate = float(self.get_parameter("lidar_match_gate_m").value)
+        A = np.asarray(pts_after, dtype=float)
+        B = np.asarray(pts_before, dtype=float)
+        if len(A) < 30 or len(B) < 30:
+            return None
+        R = np.eye(2)
+        t = np.array([float(guess_dx), float(guess_dy)])
+        rms = float("inf")
+        n_pairs = 0
+        for _ in range(12):
+            P = A @ R.T + t
+            d2 = ((P[:, None, :] - B[None, :, :]) ** 2).sum(axis=2)
+            j = d2.argmin(axis=1)
+            dmin = np.sqrt(d2[np.arange(len(P)), j])
+            mask = dmin < gate
+            n_pairs = int(mask.sum())
+            if n_pairs < 30:
+                return None
+            src = A[mask]
+            dst = B[j[mask]]
+            cs, cd = src.mean(axis=0), dst.mean(axis=0)
+            H = (src - cs).T @ (dst - cd)
+            U, _, Vt = np.linalg.svd(H)
+            Rn = Vt.T @ U.T
+            if np.linalg.det(Rn) < 0.0:
+                Vt[1, :] *= -1.0
+                Rn = Vt.T @ U.T
+            tn = cd - Rn @ cs
+            converged = np.allclose(Rn, R, atol=1e-7) and np.allclose(
+                tn, t, atol=1e-7
+            )
+            R, t = Rn, tn
+            resid = dst - (src @ R.T + t)
+            rms = float(np.sqrt((resid**2).sum(axis=1).mean()))
+            if converged:
+                break
+        dyaw = math.atan2(float(R[1, 0]), float(R[0, 0]))
+        return float(t[0]), float(t[1]), dyaw, rms, n_pairs
+
+    def _lidar_audit_drive(self, pts_before, applied_dx, applied_dy, label):
+        """Compare the just-executed drive's dead-reckoned displacement with
+        the lidar scan match; log the mismatch, and (Phase B, gated) issue a
+        follow-up drive covering the measured shortfall."""
+        if pts_before is None:
+            return
+        time.sleep(0.3)  # let a fresh post-drive scan arrive
+        pts_after = self._lidar_scan_points()
+        if pts_after is None:
+            return
+        match = self._scan_match(pts_before, pts_after, applied_dx, applied_dy)
+        if match is None:
+            self.get_logger().warn(
+                f"[{label}] lidar audit: scan match unreliable "
+                "(too few correspondences); trusting odometry"
+            )
+            return
+        mdx, mdy, dyaw, rms, n_pairs = match
+        ex, ey = mdx - applied_dx, mdy - applied_dy
+        self.get_logger().info(
+            f"[{label}] lidar audit: odom (dx={applied_dx:+.3f}, "
+            f"dy={applied_dy:+.3f}) | scan-match (dx={mdx:+.3f}, "
+            f"dy={mdy:+.3f}, dyaw={math.degrees(dyaw):+.1f}°) | "
+            f"mismatch ({ex:+.3f}, {ey:+.3f}) rms={rms:.3f} pairs={n_pairs}"
+        )
+        if not bool(self.get_parameter("lidar_drive_correction").value):
+            return
+        tol = float(self.get_parameter("lidar_correction_tol_m").value)
+        cap = float(self.get_parameter("lidar_correction_max_m").value)
+        err = math.hypot(ex, ey)
+        if err <= tol:
+            return
+        if rms > 0.02 or n_pairs < 60 or abs(dyaw) > 0.05:
+            self.get_logger().warn(
+                f"[{label}] lidar correction skipped: low-confidence match "
+                f"(rms={rms:.3f} pairs={n_pairs} "
+                f"dyaw={math.degrees(dyaw):+.1f}°)"
+            )
+            return
+        cx = max(-cap, min(cap, -ex))
+        cy = max(-cap, min(cap, -ey))
+        self.get_logger().info(
+            f"[{label}] lidar correction: driving ({cx:+.3f}, {cy:+.3f}) "
+            "to cover the measured shortfall"
+        )
+        self.drive_relative_base(cx, cy)
+
     def drive_to_feasible(self, point, lift_z, label, max_dx=None):
         # Accept a scalar or an iterable of lifts; the search requires all
         # requested lifts to be feasible & collision-free at the same orientation.
@@ -1878,12 +2034,14 @@ class GeminiPickPlaceExecutor(Node):
             f"[{label}] feasible base offset dx={dx:.3f} dy={dy:.3f} "
             f"(orientation #{orient_idx}); driving"
         )
+        lidar_pts_before = self._lidar_scan_points()
         if not self.drive_relative_base(dx, dy):
             return None
         # Reflect the base move in the point's coordinates (now in new base frame).
         axes_mode = str(self.get_parameter("drive_axes").value).lower()
         applied_dx = dx if axes_mode in ("xy", "x_only") else 0.0
         applied_dy = dy if axes_mode in ("xy", "y_only") else 0.0
+        self._lidar_audit_drive(lidar_pts_before, applied_dx, applied_dy, label)
         if applied_dx != 0.0:
             point.point.x = float(point.point.x) - applied_dx
         if applied_dy != 0.0:

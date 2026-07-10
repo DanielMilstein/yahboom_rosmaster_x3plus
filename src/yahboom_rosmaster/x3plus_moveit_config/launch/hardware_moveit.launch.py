@@ -80,6 +80,16 @@ def generate_launch_description() -> LaunchDescription:
         ),
     )
 
+    # Lidar driver for the scan-match drive audit. Off by default until the
+    # physical unit is identified and its driver installed (see
+    # lidar.launch.py TODO); flip use_lidar:=true afterwards.
+    lidar_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            PathJoinSubstitution([hw_bridge_pkg, "launch", "lidar.launch.py"])
+        ),
+        condition=IfCondition(LaunchConfiguration("use_lidar")),
+    )
+
     joint_state_filter_node = Node(
         package="x3plus_moveit_config",
         executable="filter_moveit_joint_states.py",
@@ -190,9 +200,17 @@ def generate_launch_description() -> LaunchDescription:
                 description="STM32 serial device. Override (e.g. /dev/ttyUSB2) if the "
                 "myserial udev symlink drifts after a replug.",
             ),
+            DeclareLaunchArgument(
+                "use_lidar",
+                default_value="false",
+                description="Start the lidar driver (scan-match drive "
+                "audit). Requires the driver package for the physical unit "
+                "to be installed — see lidar.launch.py.",
+            ),
             robot_state_publisher,
             hw_bridge_launch,
             camera_launch,
+            lidar_launch,
             joint_state_filter_node,
             TimerAction(period=2.0, actions=[rviz_node]),
             TimerAction(period=5.0, actions=[move_group_node]),
