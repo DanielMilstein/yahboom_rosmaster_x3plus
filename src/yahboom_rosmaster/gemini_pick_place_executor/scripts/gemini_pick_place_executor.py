@@ -13,7 +13,12 @@ faulthandler.enable(all_threads=True)
 
 from control_msgs.action import FollowJointTrajectory
 from geometry_msgs.msg import PointStamped, PoseStamped, TwistStamped
-from moveit_msgs.msg import Constraints, OrientationConstraint, PositionConstraint
+from moveit_msgs.msg import (
+    CollisionObject,
+    Constraints,
+    OrientationConstraint,
+    PositionConstraint,
+)
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import Image, JointState, LaserScan
 from shape_msgs.msg import SolidPrimitive
@@ -292,6 +297,14 @@ class GeminiPickPlaceExecutor(Node):
         # immediately (no lift/verify). Catches the failure mode where the
         # visual verifier hallucinates success on an empty closed gripper.
         self.declare_parameter("grasp_empty_tol_rad", 0.15)
+        # Publish the lidar-detected FRONT WALL (the arena barrier ahead of
+        # the robot) as a MoveIt collision object before each pick attempt,
+        # so IK/planning keep the arm off it. Wall pose comes straight from
+        # the scan (median x of the front-sector points), so it stays
+        # correct as the base drives.
+        self.declare_parameter("lidar_wall_collision", True)
+        self.declare_parameter("lidar_wall_height_m", 0.13)
+        self.declare_parameter("lidar_wall_base_z_m", 0.14)
         self.declare_parameter("verify_pick_with_gemini", True)
         self.declare_parameter("verify_pick_required", True)
         self.declare_parameter("verify_pick_service", "/gemini_verify_pick")
@@ -421,6 +434,11 @@ class GeminiPickPlaceExecutor(Node):
             scan_qos,
         )
         self.pixel_pub = self.create_publisher(PointStamped, pixel_topic, 10)
+        # PlanningSceneMonitor listens on 'collision_object' — used to keep
+        # the lidar-detected front wall in the planning scene.
+        self.collision_pub = self.create_publisher(
+            CollisionObject, "collision_object", 10
+        )
         marker_qos = QoSProfile(
             reliability=ReliabilityPolicy.RELIABLE,
             durability=DurabilityPolicy.TRANSIENT_LOCAL,
@@ -2654,6 +2672,54 @@ class GeminiPickPlaceExecutor(Node):
                 return False
         return True
 
+    def _publish_front_wall_collision(self, label):
+        """Fit the arena's front wall from the latest lidar scan (median x
+        of the forward-sector points) and publish it as a thin collision
+        box so IK/planning keep the arm and gripper off it. Re-published
+        per pick attempt, so it tracks the base as it drives."""
+        if not bool(self.get_parameter("lidar_wall_collision").value):
+            return
+        pts = self._lidar_scan_points()
+        if pts is None:
+            return
+        import numpy as np
+
+        sel = pts[
+            (np.abs(pts[:, 1]) < 0.35) & (pts[:, 0] > 0.15) & (pts[:, 0] < 1.2)
+        ]
+        if len(sel) < 20:
+            self.get_logger().warn(
+                f"[{label}] front wall not visible in scan; no collision "
+                "object published"
+            )
+            return
+        wall_x = float(np.median(sel[:, 0]))
+        wall_h = float(self.get_parameter("lidar_wall_height_m").value)
+        wall_z0 = float(self.get_parameter("lidar_wall_base_z_m").value)
+
+        obj = CollisionObject()
+        obj.header.frame_id = "base_footprint"
+        obj.header.stamp = self.get_clock().now().to_msg()
+        obj.id = "lidar_front_wall"
+        box = SolidPrimitive()
+        box.type = SolidPrimitive.BOX
+        box.dimensions = [0.02, 1.2, wall_h]
+        from geometry_msgs.msg import Pose as _Pose
+
+        pose = _Pose()
+        pose.position.x = wall_x + 0.01
+        pose.position.y = 0.0
+        pose.position.z = wall_z0 + wall_h / 2.0
+        pose.orientation.w = 1.0
+        obj.primitives = [box]
+        obj.primitive_poses = [pose]
+        obj.operation = CollisionObject.ADD  # same id -> replaces in scene
+        self.collision_pub.publish(obj)
+        self.get_logger().info(
+            f"[{label}] front wall collision object at x={wall_x:.3f} "
+            f"({len(sel)} scan points)"
+        )
+
     def _grasp_descent_nominal(self, object_height_m):
         """Nominal (unclamped) pick descent added to target.z: the fingertip
         descends grasp_z_fraction_from_top * object_height below the perceived
@@ -2706,6 +2772,7 @@ class GeminiPickPlaceExecutor(Node):
         open_name = str(self.get_parameter("gripper_open_named").value)
         pick_lift = float(self.get_parameter("pick_lift_m").value)
         verify_show_pose = str(self.get_parameter("verify_show_pose_named").value)
+        self._publish_front_wall_collision("pick_prep")
         grasp_descent = self._clamp_grasp_descent(
             target_point, object_height_m, table_z
         )
