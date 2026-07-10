@@ -38,6 +38,7 @@ FORWARDED_PARAMS = [
     ("lidar_drive_correction", "false"),
     ("lidar_correction_tol_m", "0.01"),
     ("lidar_correction_max_m", "0.05"),
+    ("grasp_empty_tol_rad", "0.15"),
     ("grasp_engage_depth_m", "0.03"),
     ("perception_attempts", "3"),
     ("project_attempts", "4"),

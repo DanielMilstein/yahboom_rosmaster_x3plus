@@ -286,6 +286,12 @@ class GeminiPickPlaceExecutor(Node):
         # modeling error on this gripper, ~2 cm true clearance.
         self.declare_parameter("pick_z_safety_m", 0.10)
         # Gemini grasp verification after the pick + lift.
+        # Empty-grasp gate: after close-until-contact, if the jaws ended up
+        # this much more closed (rad) than the expected object stop computed
+        # from the measured width, the grasp caught air — fail the pick
+        # immediately (no lift/verify). Catches the failure mode where the
+        # visual verifier hallucinates success on an empty closed gripper.
+        self.declare_parameter("grasp_empty_tol_rad", 0.15)
         self.declare_parameter("verify_pick_with_gemini", True)
         self.declare_parameter("verify_pick_required", True)
         self.declare_parameter("verify_pick_service", "/gemini_verify_pick")
@@ -2460,7 +2466,7 @@ class GeminiPickPlaceExecutor(Node):
             return False
         return True
 
-    def _close_gripper_until_contact(self, label):
+    def _close_gripper_until_contact(self, label, expected_grip=None):
         """Step the grip_joint command toward the SRDF "close" limit (0.0 rad)
         in small increments. After each step, read back the actual grip_joint
         position from /joint_states. Stop when actual lags command (the fingers
@@ -2610,6 +2616,22 @@ class GeminiPickPlaceExecutor(Node):
             f"(actual={final_actual if final_actual is None else f'{final_actual:.3f}'}), "
             f"stop_reason={stop_reason!r}"
         )
+        # Empty-grasp gate: a real object stops the jaws near the expected
+        # grip position computed from the measured width. If the fingers
+        # ended up far MORE closed than that (grip_joint: -1.54 open ->
+        # 0.0 closed), they closed on air — the "contact" was the jaws
+        # meeting each other. Fail the pick NOW, before lift/verify: the
+        # visual verifier has hallucinated success on exactly this state.
+        if expected_grip is not None and final_actual is not None:
+            tol = float(self.get_parameter("grasp_empty_tol_rad").value)
+            if float(final_actual) >= float(expected_grip) + tol:
+                self.get_logger().error(
+                    f"[{label}] EMPTY GRASP: jaws closed to "
+                    f"{final_actual:.3f} rad, past the expected object stop "
+                    f"({expected_grip:.3f} + tol {tol:.2f}); nothing between "
+                    "the fingers — failing the pick without lift/verify"
+                )
+                return False
         return True
 
     def grasp_grip_joint(self, measured_width_m):
@@ -2722,7 +2744,8 @@ class GeminiPickPlaceExecutor(Node):
              lambda: self.plan_and_execute_pose(
                  self.top_down_pose(pick_target, grasp_descent), "04_pick")),
             ("05_close_gripper",
-             lambda: self._close_gripper_until_contact("05_close_gripper")),
+             lambda: self._close_gripper_until_contact(
+                 "05_close_gripper", expected_grip=grip_value)),
             ("06_lift",
              lambda: self.plan_and_execute_pose(
                  self.top_down_pose(target_point, pick_lift), "06_lift")),
