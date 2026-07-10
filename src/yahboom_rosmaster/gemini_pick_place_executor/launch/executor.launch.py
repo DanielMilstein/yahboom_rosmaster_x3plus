@@ -45,11 +45,13 @@ FORWARDED_PARAMS = [
     ("pose_correction_iters", "2"),
     ("pose_correction_tol_m", "0.012"),
     ("table_z_source", "perception"),
-    # Real Prusa bed surface height above base_footprint (tape-measured
-    # 2026-07-02). The old 0.14 default let the floor clamp command
-    # fingertips BELOW the bed when the extent measurement fell back,
-    # hooking the bed edge on retreat.
-    ("table_z_m", "0.16"),
+    # Surface height above base_footprint of the CURRENT scene (the new
+    # table, lidar-era setup: perception measured z_bottom≈0.142). Stale
+    # values are dangerous in BOTH directions: too low lets the floor clamp
+    # command fingertips below the surface (arm hooked the old bed edge);
+    # too high clamps the pick above short objects (the old 0.16 default
+    # pushed the fingertip to the cube's top rim on the new table).
+    ("table_z_m", "0.14"),
     ("pick_z_safety_m", "0.10"),
     ("verify_pick_with_gemini", "true"),
     ("verify_pick_required", "true"),

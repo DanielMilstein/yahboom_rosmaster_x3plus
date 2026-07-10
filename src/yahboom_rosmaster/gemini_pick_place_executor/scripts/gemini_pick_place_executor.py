@@ -2032,7 +2032,11 @@ class GeminiPickPlaceExecutor(Node):
         err = math.hypot(ex, ey)
         if err <= tol:
             return
-        if rms > 0.02 or n_pairs < 60 or abs(dyaw) > 0.05:
+        # Real-scene match quality: first hardware audits showed rms
+        # 0.018-0.022 with ~280 pairs while measuring a consistent,
+        # tape-plausible 1 cm odometry shortfall — so the gate sits above
+        # that, not at the synthetic-scene ideal.
+        if rms > 0.035 or n_pairs < 100 or abs(dyaw) > 0.05:
             self.get_logger().warn(
                 f"[{label}] lidar correction skipped: low-confidence match "
                 f"(rms={rms:.3f} pairs={n_pairs} "
