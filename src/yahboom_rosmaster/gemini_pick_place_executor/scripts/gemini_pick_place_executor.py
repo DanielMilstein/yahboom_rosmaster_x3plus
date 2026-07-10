@@ -594,25 +594,44 @@ class GeminiPickPlaceExecutor(Node):
                 pick_lift,
                 self._grasp_descent_nominal(height_guess),
             ]
-            # With re-perception enabled, stop the first drive while the
-            # target is still visible to the depth camera (outside its
-            # min-range blind zone); the corrected drive after re-perceiving
-            # closes the rest with fresh close-range data instead of
-            # dead-reckoning the whole approach.
-            initial_max_dx = None
+            # With re-perception enabled, the first drive is a pure STAGING
+            # move: stop while the target is still visible to the depth
+            # camera (outside its ~0.6 m min-range blind zone) and centered
+            # laterally. Crucially, NO arm-IK feasibility is required at the
+            # staging stop — the target is intentionally still out of reach
+            # there; the corrected drive after re-perceiving owns
+            # reachability. (Requiring IK here made every candidate fail by
+            # construction and burned minutes of search.)
             if reperceive:
                 min_tx = float(
                     self.get_parameter("reperceive_min_target_x_m").value
                 )
-                initial_max_dx = max(
-                    0.0, float(target_point.point.x) - min_tx
+                dx_range = list(
+                    self.get_parameter("base_search_dx_range_m").value
                 )
-            drive_result = self.drive_to_feasible(
-                target_point,
-                initial_pick_lifts,
-                "drive_to_reach_target",
-                max_dx=initial_max_dx,
-            )
+                dy_range = list(
+                    self.get_parameter("base_search_dy_range_m").value
+                )
+                stage_dx = max(
+                    0.0,
+                    min(
+                        float(target_point.point.x) - min_tx,
+                        float(dx_range[1]),
+                    ),
+                )
+                stage_dy = max(
+                    float(dy_range[0]),
+                    min(float(dy_range[1]), float(target_point.point.y)),
+                )
+                drive_result = self.drive_staging(
+                    target_point, stage_dx, stage_dy, "drive_to_reperceive"
+                )
+            else:
+                drive_result = self.drive_to_feasible(
+                    target_point,
+                    initial_pick_lifts,
+                    "drive_to_reach_target",
+                )
             if not drive_result:
                 self.get_logger().error("base drive failed; aborting")
                 return
@@ -2019,6 +2038,29 @@ class GeminiPickPlaceExecutor(Node):
             "to cover the measured shortfall"
         )
         self.drive_relative_base(cx, cy)
+
+    def drive_staging(self, point, dx, dy, label):
+        """Drive a fixed base displacement with the same bookkeeping as
+        drive_to_feasible (axes filtering, point dead-reckoning, lidar
+        audit) but WITHOUT any arm-IK feasibility requirement. Used for the
+        re-perception staging move, where the target is intentionally left
+        outside arm reach (but inside camera view)."""
+        axes_mode = str(self.get_parameter("drive_axes").value).lower()
+        dx = dx if axes_mode in ("xy", "x_only") else 0.0
+        dy = dy if axes_mode in ("xy", "y_only") else 0.0
+        self.get_logger().info(
+            f"[{label}] staging drive dx={dx:.3f} dy={dy:.3f} "
+            "(no IK requirement; re-perception follows)"
+        )
+        if dx == 0.0 and dy == 0.0:
+            return 0.0, 0.0
+        lidar_pts_before = self._lidar_scan_points()
+        if not self.drive_relative_base(dx, dy):
+            return None
+        point.point.x = float(point.point.x) - dx
+        point.point.y = float(point.point.y) - dy
+        self._lidar_audit_drive(lidar_pts_before, dx, dy, label)
+        return dx, dy
 
     def drive_to_feasible(self, point, lift_z, label, max_dx=None):
         # Accept a scalar or an iterable of lifts; the search requires all
