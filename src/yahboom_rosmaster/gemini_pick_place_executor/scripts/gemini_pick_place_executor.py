@@ -400,11 +400,19 @@ class GeminiPickPlaceExecutor(Node):
         )
         self.latest_scan = None
         self._lidar_warned = False
+        # Lidar drivers publish /scan best-effort (sensor-data QoS); a
+        # default reliable subscription is QoS-incompatible and receives
+        # nothing.
+        scan_qos = QoSProfile(
+            reliability=ReliabilityPolicy.BEST_EFFORT,
+            history=HistoryPolicy.KEEP_LAST,
+            depth=5,
+        )
         self.scan_sub = self.create_subscription(
             LaserScan,
             str(self.get_parameter("scan_topic").value),
             self.scan_callback,
-            5,
+            scan_qos,
         )
         self.pixel_pub = self.create_publisher(PointStamped, pixel_topic, 10)
         marker_qos = QoSProfile(
