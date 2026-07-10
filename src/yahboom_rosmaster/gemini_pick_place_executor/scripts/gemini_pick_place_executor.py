@@ -720,16 +720,7 @@ class GeminiPickPlaceExecutor(Node):
             else float(self.get_parameter("object_height_fallback_m").value)
         )
         # Determine the table_z used as the pick-fingertip safety floor.
-        table_z_source = str(self.get_parameter("table_z_source").value).lower()
-        if table_z_source == "perception" and measured_z_bottom is not None:
-            table_z = float(measured_z_bottom)
-        else:
-            table_z = float(self.get_parameter("table_z_m").value)
-            if table_z_source == "perception":
-                self.get_logger().info(
-                    f"table_z source=perception unavailable; falling back to "
-                    f"param table_z_m={table_z:.3f}"
-                )
+        table_z = self._resolve_table_z(measured_z_bottom)
 
         # The first drive_to_feasible chose its offset against the *pre-correction*
         # target (raw perception, no z_top fixup). Re-perception shifted xy by a
@@ -2672,28 +2663,66 @@ class GeminiPickPlaceExecutor(Node):
                 return False
         return True
 
-    def _publish_front_wall_collision(self, label):
+    def _remove_front_wall_collision(self, label, reason):
+        """Clear any previously published front-wall box. Without this a
+        stale wall (fitted before a drive, or mis-fitted) stays in the
+        planning scene forever and vetoes every subsequent pick plan."""
+        obj = CollisionObject()
+        obj.header.frame_id = "base_footprint"
+        obj.header.stamp = self.get_clock().now().to_msg()
+        obj.id = "lidar_front_wall"
+        obj.operation = CollisionObject.REMOVE
+        self.collision_pub.publish(obj)
+        self.get_logger().warn(
+            f"[{label}] front wall collision object removed: {reason}"
+        )
+
+    def _publish_front_wall_collision(self, label, target_x=None):
         """Fit the arena's front wall from the latest lidar scan (median x
-        of the forward-sector points) and publish it as a thin collision
-        box so IK/planning keep the arm and gripper off it. Re-published
-        per pick attempt, so it tracks the base as it drives."""
+        of the points in a narrow forward corridor) and publish it as a
+        thin collision box so IK/planning keep the arm and gripper off it.
+        Re-fit per pick attempt, so it tracks the base as it drives; when
+        no trustworthy fit exists the previous box is REMOVED, never left
+        stale. The corridor half-width must stay below the arena's side
+        wall distance (~0.21 m) or the side walls pollute the median and
+        the fitted wall lands in front of the target."""
         if not bool(self.get_parameter("lidar_wall_collision").value):
             return
         pts = self._lidar_scan_points()
         if pts is None:
+            self._remove_front_wall_collision(label, "no lidar scan available")
             return
         import numpy as np
 
         sel = pts[
-            (np.abs(pts[:, 1]) < 0.35) & (pts[:, 0] > 0.15) & (pts[:, 0] < 1.2)
+            (np.abs(pts[:, 1]) < 0.15) & (pts[:, 0] > 0.15) & (pts[:, 0] < 1.2)
         ]
-        if len(sel) < 20:
-            self.get_logger().warn(
-                f"[{label}] front wall not visible in scan; no collision "
-                "object published"
+        if len(sel) < 15:
+            self._remove_front_wall_collision(
+                label, "front wall not visible in scan"
             )
             return
         wall_x = float(np.median(sel[:, 0]))
+        # A real wall is a tight x-cluster; re-fit on the points near the
+        # median so stray returns (cube edge, corner spill) don't skew it.
+        near = sel[np.abs(sel[:, 0] - wall_x) < 0.06]
+        if len(near) < 15:
+            self._remove_front_wall_collision(
+                label, f"forward points too scattered to be a wall "
+                f"(median x={wall_x:.3f}, {len(near)}/{len(sel)} in cluster)"
+            )
+            return
+        wall_x = float(np.median(near[:, 0]))
+        sel = near
+        if target_x is not None and wall_x < float(target_x) + 0.02:
+            # The pick target cannot physically sit behind a solid wall —
+            # a fit in front of it is a mis-fit (side-wall leakage, arm in
+            # view, ...). Publishing it would veto every pick plan.
+            self._remove_front_wall_collision(
+                label, f"fit x={wall_x:.3f} is in front of the pick target "
+                f"x={float(target_x):.3f}; rejecting as mis-fit"
+            )
+            return
         wall_h = float(self.get_parameter("lidar_wall_height_m").value)
         wall_z0 = float(self.get_parameter("lidar_wall_base_z_m").value)
 
@@ -2719,6 +2748,33 @@ class GeminiPickPlaceExecutor(Node):
             f"[{label}] front wall collision object at x={wall_x:.3f} "
             f"({len(sel)} scan points)"
         )
+
+    def _resolve_table_z(self, measured_z_bottom):
+        """Table height used as the pick-fingertip safety floor. With
+        table_z_source=perception the measured object bottom refines the
+        param by a cm or two — but a reading far off the tape-measured
+        table_z_m is a depth failure, not a new table, and trusting it
+        would command the fingertip below (or way above) the physical
+        surface. Such readings fall back to the param."""
+        table_z_source = str(self.get_parameter("table_z_source").value).lower()
+        table_z_param = float(self.get_parameter("table_z_m").value)
+        if table_z_source != "perception":
+            return table_z_param
+        if measured_z_bottom is None:
+            self.get_logger().info(
+                f"table_z source=perception unavailable; falling back to "
+                f"param table_z_m={table_z_param:.3f}"
+            )
+            return table_z_param
+        table_z = float(measured_z_bottom)
+        if abs(table_z - table_z_param) > 0.03:
+            self.get_logger().warn(
+                f"perceived z_bottom={table_z:.3f} disagrees with "
+                f"table_z_m={table_z_param:.3f} by more than 3cm; "
+                "distrusting perception and using the param floor"
+            )
+            return table_z_param
+        return table_z
 
     def _grasp_descent_nominal(self, object_height_m):
         """Nominal (unclamped) pick descent added to target.z: the fingertip
@@ -2772,7 +2828,9 @@ class GeminiPickPlaceExecutor(Node):
         open_name = str(self.get_parameter("gripper_open_named").value)
         pick_lift = float(self.get_parameter("pick_lift_m").value)
         verify_show_pose = str(self.get_parameter("verify_show_pose_named").value)
-        self._publish_front_wall_collision("pick_prep")
+        self._publish_front_wall_collision(
+            "pick_prep", target_x=float(target_point.point.x)
+        )
         grasp_descent = self._clamp_grasp_descent(
             target_point, object_height_m, table_z
         )
@@ -2859,7 +2917,7 @@ class GeminiPickPlaceExecutor(Node):
         ]
         return self._run_step_sequence(steps)
 
-    def _prepare_for_pick_retry(self, destination_point):
+    def _prepare_for_pick_retry(self, destination_point, last_target_point=None):
         """Reset state before another pick attempt: open the gripper, stow the
         arm, re-perceive, re-measure the object, and (if drive is enabled)
         nudge the base for the new target. Returns a dict with the refreshed
@@ -2871,6 +2929,22 @@ class GeminiPickPlaceExecutor(Node):
             return None
         if not self.plan_and_execute_stow("retry_stow_for_reperception"):
             return None
+        # The approach drives usually leave the target inside the Astra's
+        # ~0.6 m near blind zone; re-perceiving from there yields not_found
+        # on a frame where the cube is invisible and kills the whole run.
+        # Back off until the last known target sits at re-perception range.
+        drive_enabled = bool(self.get_parameter("enable_base_drive").value)
+        min_x = float(self.get_parameter("reperceive_min_target_x_m").value)
+        if (
+            drive_enabled
+            and last_target_point is not None
+            and float(last_target_point.point.x) < min_x
+        ):
+            back_dx = float(last_target_point.point.x) - min_x
+            if self.drive_staging(
+                destination_point, back_dx, 0.0, "retry_back_off"
+            ) is None:
+                return None
         perceived = self.perceive_targets_with_retries(require_destination=False)
         if perceived is None:
             return None
@@ -2889,15 +2963,10 @@ class GeminiPickPlaceExecutor(Node):
             if measured_height is not None and measured_height > 0.0
             else float(self.get_parameter("object_height_fallback_m").value)
         )
-        table_z_source = str(self.get_parameter("table_z_source").value).lower()
-        if table_z_source == "perception" and measured_z_bottom is not None:
-            table_z = float(measured_z_bottom)
-        else:
-            table_z = float(self.get_parameter("table_z_m").value)
+        table_z = self._resolve_table_z(measured_z_bottom)
 
         # Re-verify reachability and nudge base if the new target xy/z slipped
         # outside the previously-blessed feasibility window.
-        drive_enabled = bool(self.get_parameter("enable_base_drive").value)
         if drive_enabled:
             pick_lift = float(self.get_parameter("pick_lift_m").value)
             corrected_lifts = [
@@ -2973,7 +3042,9 @@ class GeminiPickPlaceExecutor(Node):
                 f"Pick attempt {attempt}/{max_attempts} failed; "
                 "resetting and retrying"
             )
-            refreshed = self._prepare_for_pick_retry(destination_point)
+            refreshed = self._prepare_for_pick_retry(
+                destination_point, pick_state["target_point"]
+            )
             if refreshed is None:
                 self.get_logger().error(
                     "Could not prepare for pick retry; aborting sequence"
