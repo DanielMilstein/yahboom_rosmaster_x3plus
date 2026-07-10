@@ -6,6 +6,7 @@ find_package(ament_cmake REQUIRED)
 install(
   PROGRAMS
     scripts/gemini_pick_place_executor.py
+    scripts/lidar_debug.py
   DESTINATION lib/${PROJECT_NAME})
 
 install(
