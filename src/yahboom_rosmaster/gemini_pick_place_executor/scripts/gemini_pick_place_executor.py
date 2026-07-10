@@ -2917,13 +2917,18 @@ class GeminiPickPlaceExecutor(Node):
         ]
         return self._run_step_sequence(steps)
 
-    def _prepare_for_pick_retry(self, destination_point, last_target_point=None):
+    def _prepare_for_pick_retry(self, destination_point, prev_state=None):
         """Reset state before another pick attempt: open the gripper, stow the
         arm, re-perceive, re-measure the object, and (if drive is enabled)
         nudge the base for the new target. Returns a dict with the refreshed
         (target_point, grasp_width_m, object_height_m, table_z) or None on
         failure. `destination_point` is dead-reckoned through any extra drive.
+        When re-perception fails but `prev_state` is available, the retry
+        falls back to the last known target position (dead-reckoned and
+        lidar-audited through every drive) instead of aborting the run —
+        the empty-grasp gate catches the attempt if the object moved.
         """
+        last_target_point = prev_state["target_point"] if prev_state else None
         open_name = str(self.get_parameter("gripper_open_named").value)
         if not self.plan_and_execute_named_gripper(open_name, "retry_open_gripper"):
             return None
@@ -2941,29 +2946,51 @@ class GeminiPickPlaceExecutor(Node):
             and float(last_target_point.point.x) < min_x
         ):
             back_dx = float(last_target_point.point.x) - min_x
-            if self.drive_staging(
+            applied = self.drive_staging(
                 destination_point, back_dx, 0.0, "retry_back_off"
-            ) is None:
+            )
+            if applied is None:
                 return None
+            # Keep the last known target valid in the new base frame too —
+            # it is the fallback pick point if re-perception fails below.
+            last_target_point.point.x = (
+                float(last_target_point.point.x) - applied[0]
+            )
+            last_target_point.point.y = (
+                float(last_target_point.point.y) - applied[1]
+            )
         perceived = self.perceive_targets_with_retries(require_destination=False)
-        if perceived is None:
-            return None
-        image, plan, target_point, _re_destination = perceived
-        # Destination has already been established once and dead-reckoned through
-        # the initial drive — keep that, don't trust re-perception of it.
-        self.sanitize_destination_z(target_point, destination_point)
+        image = plan = None
+        if perceived is not None:
+            image, plan, target_point, _re_destination = perceived
+            # Destination has already been established once and dead-reckoned
+            # through the initial drive — keep that, don't trust re-perception
+            # of it.
+            self.sanitize_destination_z(target_point, destination_point)
 
-        z_top, measured_height, measured_z_bottom = self.measure_object_extent(
-            plan, image
-        )
-        if z_top is not None:
-            target_point.point.z = z_top
-        object_height = (
-            measured_height
-            if measured_height is not None and measured_height > 0.0
-            else float(self.get_parameter("object_height_fallback_m").value)
-        )
-        table_z = self._resolve_table_z(measured_z_bottom)
+            z_top, measured_height, measured_z_bottom = (
+                self.measure_object_extent(plan, image)
+            )
+            if z_top is not None:
+                target_point.point.z = z_top
+            object_height = (
+                measured_height
+                if measured_height is not None and measured_height > 0.0
+                else float(self.get_parameter("object_height_fallback_m").value)
+            )
+            table_z = self._resolve_table_z(measured_z_bottom)
+        elif prev_state is not None:
+            target_point = last_target_point
+            object_height = prev_state["object_height_m"]
+            table_z = prev_state["table_z"]
+            self.get_logger().warn(
+                "retry re-perception failed; falling back to the last known "
+                f"target position ({target_point.point.x:.3f},"
+                f"{target_point.point.y:.3f},{target_point.point.z:.3f}) "
+                "dead-reckoned through all drives"
+            )
+        else:
+            return None
 
         # Re-verify reachability and nudge base if the new target xy/z slipped
         # outside the previously-blessed feasibility window.
@@ -2995,8 +3022,12 @@ class GeminiPickPlaceExecutor(Node):
                     f"{destination_point.point.y:.3f},"
                     f"{destination_point.point.z:.3f})"
                 )
-        grasp_width = self.measure_grasp_width(plan, image)
-        target_label = str(plan.get("target_object", {}).get("label", "object"))
+        if plan is not None:
+            grasp_width = self.measure_grasp_width(plan, image)
+            target_label = str(plan.get("target_object", {}).get("label", "object"))
+        else:
+            grasp_width = prev_state["grasp_width_m"]
+            target_label = prev_state["target_label"]
         return {
             "target_point": target_point,
             "grasp_width_m": grasp_width,
@@ -3042,9 +3073,7 @@ class GeminiPickPlaceExecutor(Node):
                 f"Pick attempt {attempt}/{max_attempts} failed; "
                 "resetting and retrying"
             )
-            refreshed = self._prepare_for_pick_retry(
-                destination_point, pick_state["target_point"]
-            )
+            refreshed = self._prepare_for_pick_retry(destination_point, pick_state)
             if refreshed is None:
                 self.get_logger().error(
                     "Could not prepare for pick retry; aborting sequence"
