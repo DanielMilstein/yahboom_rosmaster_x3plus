@@ -1844,10 +1844,16 @@ class GeminiPickPlaceExecutor(Node):
         if order == "min_drive":
             key = lambda d: d[0] * d[0] + d[1] * d[1]  # noqa: E731
         else:
+            # Decomposed reach: aim the FORWARD component at the ideal and
+            # keep the target laterally CENTERED. Scoring the scalar
+            # (hypot) distance is wrong: when the forward term is already
+            # below ideal, the hypotenuse can only reach the ideal by
+            # padding with LATERAL offset — the search then strafes the
+            # base away from the target (observed on hardware: the robot
+            # kept driving right of a left-lying cube, retry after retry).
             key = lambda d: (  # noqa: E731
-                abs(
-                    math.hypot(tx - d[0] - arm_x, ty - d[1]) - ideal
-                ),
+                abs((tx - d[0] - arm_x) - ideal)
+                + 1.5 * abs(ty - d[1]),
                 d[0] * d[0] + d[1] * d[1],
             )
         candidates = sorted(
