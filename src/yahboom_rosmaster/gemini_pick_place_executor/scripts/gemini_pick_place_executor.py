@@ -1434,32 +1434,49 @@ class GeminiPickPlaceExecutor(Node):
             if n > 1e-9:
                 results.append((qx / n, qy / n, qz / n, qw / n))
 
+        if bool(self.get_parameter("grasp_tilt_first").value):
+            # Prefer the near-horizontal side-grasp: reverse so the steepest
+            # tilt (~1.57 rad, horizontal) is tried first and top-down is the
+            # last resort. find_feasible and plan_and_execute share this order,
+            # so the validated and executed orientations stay consistent.
+            # (Reverse BEFORE the roll expansion below so each orientation's
+            # preferred roll twin stays first within its pair.)
+            results = results[::-1]
+
         # Roll every candidate about the gripper's approach axis (local z) to
         # seat the jaws in the grasping plane. The fingertip offset lies along
         # this axis, so the roll leaves the fingertip position invariant (IK
         # re-solves the wrist) — unlike rolling joint5 directly, which swings
-        # the offset fingertip through an arc. Default 0 keeps sim behavior;
-        # ~1.0-2.1 rad on hardware (tune by eye).
+        # the offset fingertip through an arc.
+        #
+        # The wrist realizes these candidates at j5 ~= roll - pi (measured:
+        # roll 3.1416 -> j5 0.000, roll 1.5708 -> j5 -1.571, roll 0.0 ->
+        # j5 +-pi = OUTSIDE the +-1.5708 servo limit, which failed IK on
+        # every candidate at every base offset: 864/864 rejections). A
+        # parallel-jaw gripper grasps identically under a 180-deg roll (the
+        # fingers swap), so emit BOTH roll and roll+pi for each candidate,
+        # trying the twin with the more central predicted wrist angle first.
+        # This makes every roll value IK-viable; the roll still selects the
+        # physical jaw plane (1.5708 = horizontal jaws for the side grasp).
         roll = float(self.get_parameter("grasp_roll_offset_rad").value)
-        if abs(roll) > 1e-9:
-            rz = math.sin(roll / 2.0)
-            rw = math.cos(roll / 2.0)
-            rolled = []
-            for (qx, qy, qz, qw) in results:
+        variants = []
+        for extra in (0.0, math.pi):
+            v = roll + extra
+            j5_pred = math.atan2(math.sin(v - math.pi), math.cos(v - math.pi))
+            variants.append((abs(j5_pred), v))
+        variants.sort(key=lambda t: t[0])
+        rolled = []
+        for (qx, qy, qz, qw) in results:
+            for _, v in variants:
+                rz = math.sin(v / 2.0)
+                rw = math.cos(v / 2.0)
                 rolled.append((
                     qx * rw + qy * rz,
                     qy * rw - qx * rz,
                     qw * rz + qz * rw,
                     qw * rw - qz * rz,
                 ))
-            results = rolled
-        if bool(self.get_parameter("grasp_tilt_first").value):
-            # Prefer the near-horizontal side-grasp: reverse so the steepest
-            # tilt (~1.57 rad, horizontal) is tried first and top-down is the
-            # last resort. find_feasible and plan_and_execute share this order,
-            # so the validated and executed orientations stay consistent.
-            results = results[::-1]
-        return results
+        return rolled
 
     def state_is_collision_free(self, state):
         """Check `state` against the current planning scene. Returns False if
