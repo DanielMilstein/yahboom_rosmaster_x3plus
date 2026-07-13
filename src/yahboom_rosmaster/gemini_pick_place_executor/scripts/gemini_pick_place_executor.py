@@ -677,6 +677,7 @@ class GeminiPickPlaceExecutor(Node):
                     target_point,
                     initial_pick_lifts,
                     "drive_to_reach_target",
+                    engage_last_lift=True,
                 )
             if not drive_result:
                 self.get_logger().error("base drive failed; aborting")
@@ -748,6 +749,7 @@ class GeminiPickPlaceExecutor(Node):
                 target_point,
                 corrected_pick_lifts,
                 "drive_to_reach_target_corrected",
+                engage_last_lift=True,
             )
             if not drive_result2:
                 self.get_logger().error(
@@ -1530,7 +1532,11 @@ class GeminiPickPlaceExecutor(Node):
         tabletop/octomap are disabled, so the search-time check only caught
         self-collisions anyway.)"""
         from moveit.core.robot_state import RobotState
-        for seed in self._IK_SEEDS:
+        # Joint solutions cached from the last feasibility search solve the
+        # executed pick/pre-pick poses (same targets) in one fast seeded
+        # call instead of grinding the generic seeds x full timeout.
+        seeds = tuple(getattr(self, "_search_seed_joints", ())) + self._IK_SEEDS
+        for seed in seeds:
             state = RobotState(robot_model)
             try:
                 state.set_joint_group_positions(arm_name, list(seed))
@@ -1625,7 +1631,7 @@ class GeminiPickPlaceExecutor(Node):
         # (~20 s), and the search's winner almost always solves.
         ordered = list(enumerate(candidates))
         preferred = getattr(self, "_preferred_orient_idx", None)
-        if preferred is not None and 0 < preferred < len(ordered):
+        if preferred is not None and 0 <= preferred < len(ordered):
             ordered.insert(0, ordered.pop(preferred))
         for idx, (qx, qy, qz, qw) in ordered:
             ox, oy, oz = rotate_vector_by_quat(tip_offset, qx, qy, qz, qw)
@@ -1805,7 +1811,9 @@ class GeminiPickPlaceExecutor(Node):
         msg.header.frame_id = "base_link"
         self.cmd_vel_pub.publish(msg)
 
-    def find_feasible_drive_for_point(self, point, lift_zs, max_dx=None):
+    def find_feasible_drive_for_point(
+        self, point, lift_zs, max_dx=None, engage_last_lift=False
+    ):
         """Search candidate base displacements (dx, dy) for one where arm IK is
         feasible AND collision-free at every fingertip target
         (point.x, point.y, point.z + lift) for each lift in `lift_zs`.
@@ -1920,6 +1928,17 @@ class GeminiPickPlaceExecutor(Node):
         fy_world = float(point.point.y)
         z_world = float(point.point.z)
 
+        # The executed pick advances the fingertip grasp_engage_depth_m past
+        # the perceived near face along the horizontal approach (side grasp).
+        # The deepest lift must be validated at THAT point, not the
+        # unengaged one: 3 cm at the reach boundary is the difference
+        # between the search blessing a spot and the pick then failing
+        # every orientation there (observed: 12/12 IK failures at a
+        # search-approved offset).
+        engage = 0.0
+        if engage_last_lift and bool(self.get_parameter("grasp_tilt_first").value):
+            engage = float(self.get_parameter("grasp_engage_depth_m").value)
+
         ik_fails = 0
         collision_fails = 0
         total_candidates = len(candidates)
@@ -1939,10 +1958,23 @@ class GeminiPickPlaceExecutor(Node):
                 ox, oy, oz = rotate_vector_by_quat(tip_offset, qx, qy, qz, qw)
                 # Require this orientation to be valid at every requested lift.
                 all_lifts_ok = True
-                for lift in lifts:
+                solutions = []
+                for lift_idx, lift in enumerate(lifts):
+                    exx, eyy = fx, fy
+                    if (
+                        engage > 0.0
+                        and len(lifts) > 1
+                        and lift_idx == len(lifts) - 1
+                    ):
+                        # Engagement advances along the approach yaw, which
+                        # is identical for the engaged point (same ray from
+                        # the arm column), so the orientations still apply.
+                        yaw = math.atan2(fy, fx - arm_x)
+                        exx = fx + engage * math.cos(yaw)
+                        eyy = fy + engage * math.sin(yaw)
                     fz = z_world + lift
-                    wx = fx - ox
-                    wy = fy - oy
+                    wx = exx - ox
+                    wy = eyy - oy
                     wz = fz - oz
                     attempt_pose = Pose()
                     attempt_pose.position.x = wx
@@ -1961,16 +1993,29 @@ class GeminiPickPlaceExecutor(Node):
                         ik_fails += 1
                         all_lifts_ok = False
                         break
+                    try:
+                        solutions.append(tuple(
+                            float(v) for v in
+                            state.get_joint_group_positions(arm_name)
+                        ))
+                    except Exception:  # noqa: BLE001
+                        pass
                 if all_lifts_ok:
                     self.get_logger().info(
                         f"find_feasible_drive: feasible at dx={dx:.3f} dy={dy:.3f} "
                         f"orient #{orient_idx} after {cand_idx + 1} candidates "
-                        f"(lifts={[round(l, 3) for l in lifts]})"
+                        f"(lifts={[round(l, 3) for l in lifts]}, "
+                        f"engage_last={engage:.3f})"
                     )
                     # Remember which orientation the search validated so the
                     # pick-time candidate loop tries it FIRST — each failed
                     # candidate there costs ik_timeout_sec x len(_IK_SEEDS).
                     self._preferred_orient_idx = orient_idx
+                    # And cache the joint solutions: the pick/pre-pick
+                    # targets are these exact poses (post-drive), so seeding
+                    # IK with them solves in one fast call instead of
+                    # re-deriving what the search already proved.
+                    self._search_seed_joints = tuple(solutions)
                     return dx, dy, orient_idx
         self.get_logger().warn(
             f"find_feasible_drive: no feasible offset in {len(candidates)} candidates "
@@ -2139,10 +2184,14 @@ class GeminiPickPlaceExecutor(Node):
         self._lidar_audit_drive(lidar_pts_before, dx, dy, label)
         return dx, dy
 
-    def drive_to_feasible(self, point, lift_z, label, max_dx=None):
+    def drive_to_feasible(
+        self, point, lift_z, label, max_dx=None, engage_last_lift=False
+    ):
         # Accept a scalar or an iterable of lifts; the search requires all
         # requested lifts to be feasible & collision-free at the same orientation.
-        result = self.find_feasible_drive_for_point(point, lift_z, max_dx=max_dx)
+        result = self.find_feasible_drive_for_point(
+            point, lift_z, max_dx=max_dx, engage_last_lift=engage_last_lift
+        )
         if result is None:
             self.get_logger().error(
                 f"[{label}] no feasible base offset found in search range"
@@ -3089,7 +3138,10 @@ class GeminiPickPlaceExecutor(Node):
                 self._grasp_descent_nominal(object_height),
             ]
             drive_result = self.drive_to_feasible(
-                target_point, corrected_lifts, "retry_drive_correction"
+                target_point,
+                corrected_lifts,
+                "retry_drive_correction",
+                engage_last_lift=True,
             )
             if not drive_result:
                 self.get_logger().error(
