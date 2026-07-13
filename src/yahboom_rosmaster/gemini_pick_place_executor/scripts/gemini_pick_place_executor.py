@@ -304,7 +304,16 @@ class GeminiPickPlaceExecutor(Node):
         # correct as the base drives.
         self.declare_parameter("lidar_wall_collision", True)
         self.declare_parameter("lidar_wall_height_m", 0.13)
-        self.declare_parameter("lidar_wall_base_z_m", 0.14)
+        # The arena walls stand ON the drive surface (base_footprint z=0);
+        # a raised base puts the box exactly in the altitude band the arm
+        # crosses when reaching over the wall, vetoing every pick plan.
+        self.declare_parameter("lidar_wall_base_z_m", 0.0)
+        # base_link -> laser_link x offset from the URDF (laser_joint);
+        # scan points must be shifted by it to be true base-frame x.
+        self.declare_parameter("lidar_offset_x_m", 0.10478)
+        # Hold the arm at a failed (empty) grasp for this long so the
+        # scene can be tape-measured against the logged FK fingertip.
+        self.declare_parameter("empty_grasp_freeze_sec", 0.0)
         self.declare_parameter("verify_pick_with_gemini", True)
         self.declare_parameter("verify_pick_required", True)
         self.declare_parameter("verify_pick_service", "/gemini_verify_pick")
@@ -1946,9 +1955,9 @@ class GeminiPickPlaceExecutor(Node):
         return None
 
     def _lidar_scan_points(self):
-        """Latest lidar scan as base-frame xy points (the lidar sits at the
-        base xy origin per the URDF, so polar->xy needs no offset). Returns
-        an (N,2) numpy array or None (no scan / audit disabled)."""
+        """Latest lidar scan as base-frame xy points (polar->xy plus the
+        URDF's base_link->laser_link forward offset). Returns an (N,2)
+        numpy array or None (no scan / audit disabled)."""
         if not bool(self.get_parameter("lidar_audit").value):
             return None
         scan = self.latest_scan
@@ -1973,6 +1982,10 @@ class GeminiPickPlaceExecutor(Node):
         if len(r) < 30:
             return None
         pts = np.stack([r * np.cos(th), r * np.sin(th)], axis=1)
+        # laser_link sits ahead of base_link (URDF laser_joint x); shift so
+        # the points are true base-frame x. Differential uses (the ICP
+        # audit) don't care, but absolute ones (the front-wall fit) do.
+        pts[:, 0] += float(self.get_parameter("lidar_offset_x_m").value)
         if len(pts) > 400:
             pts = pts[:: len(pts) // 400 + 1]
         return pts
@@ -2640,6 +2653,24 @@ class GeminiPickPlaceExecutor(Node):
                     f"({expected_grip:.3f} + tol {tol:.2f}); nothing between "
                     "the fingers — failing the pick without lift/verify"
                 )
+                freeze = float(
+                    self.get_parameter("empty_grasp_freeze_sec").value
+                )
+                if freeze > 0.0:
+                    fk = self._last_fk_fingertip
+                    fk_txt = (
+                        f"FK fingertip=({fk[0]:.3f},{fk[1]:.3f},{fk[2]:.3f})"
+                        if fk is not None else "FK fingertip unavailable"
+                    )
+                    self.get_logger().warn(
+                        f"[{label}] FREEZING at the failed grasp for "
+                        f"{freeze:.0f}s — TAPE-MEASURE NOW: (1) fingertip "
+                        "height above the surface the cube sits on, "
+                        "(2) horizontal gap fingertip -> cube near face. "
+                        f"Model says {fk_txt} (base_footprint; drive "
+                        "surface = z 0)."
+                    )
+                    time.sleep(freeze)
                 return False
         return True
 
@@ -2677,15 +2708,18 @@ class GeminiPickPlaceExecutor(Node):
             f"[{label}] front wall collision object removed: {reason}"
         )
 
-    def _publish_front_wall_collision(self, label, target_x=None):
+    def _publish_front_wall_collision(self, label):
         """Fit the arena's front wall from the latest lidar scan (median x
         of the points in a narrow forward corridor) and publish it as a
         thin collision box so IK/planning keep the arm and gripper off it.
-        Re-fit per pick attempt, so it tracks the base as it drives; when
-        no trustworthy fit exists the previous box is REMOVED, never left
-        stale. The corridor half-width must stay below the arena's side
-        wall distance (~0.21 m) or the side walls pollute the median and
-        the fitted wall lands in front of the target."""
+        In this scene the wall legitimately stands BETWEEN the robot and
+        the pick target (it guards the printer screen; the arm reaches
+        over it), so a fit in front of the target is expected, not a
+        mis-fit. Re-fit per pick attempt, so it tracks the base as it
+        drives; when no trustworthy fit exists the previous box is
+        REMOVED, never left stale. The corridor half-width must stay
+        below the arena's side wall distance (~0.21 m) or the side walls
+        pollute the median."""
         if not bool(self.get_parameter("lidar_wall_collision").value):
             return
         pts = self._lidar_scan_points()
@@ -2714,15 +2748,6 @@ class GeminiPickPlaceExecutor(Node):
             return
         wall_x = float(np.median(near[:, 0]))
         sel = near
-        if target_x is not None and wall_x < float(target_x) + 0.02:
-            # The pick target cannot physically sit behind a solid wall —
-            # a fit in front of it is a mis-fit (side-wall leakage, arm in
-            # view, ...). Publishing it would veto every pick plan.
-            self._remove_front_wall_collision(
-                label, f"fit x={wall_x:.3f} is in front of the pick target "
-                f"x={float(target_x):.3f}; rejecting as mis-fit"
-            )
-            return
         wall_h = float(self.get_parameter("lidar_wall_height_m").value)
         wall_z0 = float(self.get_parameter("lidar_wall_base_z_m").value)
 
@@ -2828,9 +2853,7 @@ class GeminiPickPlaceExecutor(Node):
         open_name = str(self.get_parameter("gripper_open_named").value)
         pick_lift = float(self.get_parameter("pick_lift_m").value)
         verify_show_pose = str(self.get_parameter("verify_show_pose_named").value)
-        self._publish_front_wall_collision(
-            "pick_prep", target_x=float(target_point.point.x)
-        )
+        self._publish_front_wall_collision("pick_prep")
         grasp_descent = self._clamp_grasp_descent(
             target_point, object_height_m, table_z
         )
