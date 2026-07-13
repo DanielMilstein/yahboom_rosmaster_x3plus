@@ -812,6 +812,15 @@ class GeminiPickPlaceExecutor(Node):
                     )
                 except Exception as exc:
                     self.get_logger().warn(f"failure_reset_open: {exc}")
+                # The wall box is fixed in base_footprint; after the
+                # drive-back below it would sit inside the robot and could
+                # veto the reset pose plan.
+                try:
+                    self._remove_front_wall_collision(
+                        "failure_reset", "base about to drive back"
+                    )
+                except Exception as exc:
+                    self.get_logger().warn(f"failure_reset_wall_remove: {exc}")
                 if initial_odom is not None:
                     try:
                         self.drive_back_to(initial_odom)
@@ -2748,6 +2757,15 @@ class GeminiPickPlaceExecutor(Node):
             return
         wall_x = float(np.median(near[:, 0]))
         sel = near
+        if wall_x < 0.24:
+            # After deep approach drives the wall can end up hugging the
+            # chassis; a box there overlaps the robot's own collision body
+            # and puts every start state in collision.
+            self._remove_front_wall_collision(
+                label, f"wall at x={wall_x:.3f} too close to the chassis "
+                "to model as a collision box"
+            )
+            return
         wall_h = float(self.get_parameter("lidar_wall_height_m").value)
         wall_z0 = float(self.get_parameter("lidar_wall_base_z_m").value)
 
@@ -2757,7 +2775,9 @@ class GeminiPickPlaceExecutor(Node):
         obj.id = "lidar_front_wall"
         box = SolidPrimitive()
         box.type = SolidPrimitive.BOX
-        box.dimensions = [0.02, 1.2, wall_h]
+        # Width covers the arena interior (~0.42 m); much wider just creates
+        # spurious finger-vs-box conflicts when the gripper works beside it.
+        box.dimensions = [0.02, 0.5, wall_h]
         from geometry_msgs.msg import Pose as _Pose
 
         pose = _Pose()
@@ -2920,12 +2940,19 @@ class GeminiPickPlaceExecutor(Node):
              lambda: self.plan_and_execute_named_arm(
                  str(self.get_parameter("carry_pose_named").value),
                  "06a_tuck_for_drive")),
+            # The wall box is base_footprint-fixed; drop it before the base
+            # drives or it goes stale (and can land inside the robot).
             ("06b_drive_to_destination",
-             lambda: self.drive_to_feasible(
-                 destination_point,
-                 [place_lift, 0.0],
-                 "06b_drive_to_destination",
-             )),
+             lambda: (
+                 self._remove_front_wall_collision(
+                     "06b_drive_to_destination", "base about to drive"
+                 ),
+                 self.drive_to_feasible(
+                     destination_point,
+                     [place_lift, 0.0],
+                     "06b_drive_to_destination",
+                 ),
+             )[1]),
             ("07_pre_place",
              lambda: self.plan_and_execute_pose(
                  self.top_down_pose(destination_point, place_lift), "07_pre_place")),
@@ -2954,9 +2981,30 @@ class GeminiPickPlaceExecutor(Node):
         last_target_point = prev_state["target_point"] if prev_state else None
         open_name = str(self.get_parameter("gripper_open_named").value)
         if not self.plan_and_execute_named_gripper(open_name, "retry_open_gripper"):
+            # Opening at the failed-pick pose can be vetoed by the wall
+            # collision box (the finger links sweep near it when the arm
+            # hovers over the wall). Pull the arm to stow first — that plan
+            # is wall-aware — and open from there. Costs the drop-in-place
+            # behavior for a held object, but this path only runs on a
+            # FAILED pick, so the jaws are almost certainly empty.
+            self.get_logger().warn(
+                "retry: open-gripper vetoed at the pick pose (wall box?); "
+                "stowing first, then opening"
+            )
+            if not self.plan_and_execute_stow("retry_stow_for_reperception"):
+                return None
+            if not self.plan_and_execute_named_gripper(
+                open_name, "retry_open_gripper_stowed"
+            ):
+                return None
+        elif not self.plan_and_execute_stow("retry_stow_for_reperception"):
             return None
-        if not self.plan_and_execute_stow("retry_stow_for_reperception"):
-            return None
+        # The wall box is fixed in base_footprint; the drives below would
+        # leave it stale (eventually inside the robot). The next pick
+        # attempt re-fits it from a fresh scan at pick_prep.
+        self._remove_front_wall_collision(
+            "retry", "base about to drive; wall will be re-fit at pick_prep"
+        )
         # The approach drives usually leave the target inside the Astra's
         # ~0.6 m near blind zone; re-perceiving from there yields not_found
         # on a frame where the cube is invisible and kills the whole run.

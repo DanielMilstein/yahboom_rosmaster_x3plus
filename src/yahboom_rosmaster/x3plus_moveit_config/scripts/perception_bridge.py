@@ -58,6 +58,15 @@ class PerceptionBridge(Node):
         # cancel the offset; only absolute target points shift. Tune from a
         # no-drive perceive-only run: offset = (measured_pos - perceived_pos).
         self.declare_parameter("correction_offset_xyz", [0.0, 0.0, 0.0])
+        # Camera pitch trim (rad), applied to the optical-frame point before
+        # the TF to base. Corrects a physically mis-pitched camera mount: the
+        # signature is perception reading LOW and SHORT, with both errors
+        # growing linearly with range. POSITIVE tips the perceived scene UP
+        # (fixes low+short); magnitude ~= z_error / ray_length. Unlike
+        # correction_offset_xyz (constant, valid at one range only), a pitch
+        # trim is correct at every range. Runtime-tunable:
+        #   ros2 param set /x3plus_perception_bridge pitch_correction_rad 0.12
+        self.declare_parameter("pitch_correction_rad", 0.0)
 
         self.rgb_topic = self.get_parameter("rgb_topic").value
         self.depth_topic = self.get_parameter("depth_topic").value
@@ -283,6 +292,14 @@ class PerceptionBridge(Node):
         point.point.x = (float(depth_u) - cx) * depth_m / fx
         point.point.y = (float(depth_v) - cy) * depth_m / fy
         point.point.z = depth_m
+        pitch = float(self.get_parameter("pitch_correction_rad").value)
+        if pitch != 0.0:
+            # Rotate about the optical x-axis (x right, y down, z forward):
+            # positive pitch moves the point toward -y (up) — range preserved.
+            c, s = math.cos(pitch), math.sin(pitch)
+            y, z = point.point.y, point.point.z
+            point.point.y = c * y - s * z
+            point.point.z = s * y + c * z
         return point
 
     def depth_near_pixel(self, depth_msg, u, v):

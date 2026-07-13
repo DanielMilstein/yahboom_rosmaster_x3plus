@@ -148,6 +148,16 @@ def generate_launch_description() -> LaunchDescription:
                 #   ros2 param set /x3plus_perception_bridge \
                 #       correction_offset_xyz "[x, y, z]"
                 "correction_offset_xyz": [0.016, 0.037, 0.0],
+                # Camera pitch trim: perception reading LOW+SHORT with the
+                # error growing with range = camera physically pitched down
+                # vs the URDF. Freeze-tape 2026-07-13 measured ~0.125 rad
+                # (~7 deg): true cube (x 0.64, z_top 0.195) perceived at
+                # (0.485, 0.106). FIRST try to physically straighten the
+                # camera mount; only if a residual remains, set this to
+                # residual z_error / ray_length (positive = tips scene up):
+                #   ros2 param set /x3plus_perception_bridge \
+                #       pitch_correction_rad 0.125
+                "pitch_correction_rad": 0.0,
             }
         ],
     )
