@@ -1929,9 +1929,10 @@ class GeminiPickPlaceExecutor(Node):
         z_world = float(point.point.z)
 
         # The executed pick advances the fingertip grasp_engage_depth_m past
-        # the perceived near face along the horizontal approach (side grasp).
-        # The deepest lift must be validated at THAT point, not the
-        # unengaged one: 3 cm at the reach boundary is the difference
+        # the perceived near face along the horizontal approach (side
+        # grasp), and pre-pick/lift hover directly above that engaged point
+        # (vertical descent). ALL lifts must therefore be validated at the
+        # engaged point: 3 cm at the reach boundary is the difference
         # between the search blessing a spot and the pick then failing
         # every orientation there (observed: 12/12 IK failures at a
         # search-approved offset).
@@ -1961,11 +1962,7 @@ class GeminiPickPlaceExecutor(Node):
                 solutions = []
                 for lift_idx, lift in enumerate(lifts):
                     exx, eyy = fx, fy
-                    if (
-                        engage > 0.0
-                        and len(lifts) > 1
-                        and lift_idx == len(lifts) - 1
-                    ):
+                    if engage > 0.0:
                         # Engagement advances along the approach yaw, which
                         # is identical for the engaged point (same ray from
                         # the arm column), so the orientations still apply.
@@ -2948,8 +2945,8 @@ class GeminiPickPlaceExecutor(Node):
         # Perception hits the object's near face; for a side grasp, push the
         # pick fingertip target past it along the horizontal approach so the
         # body sits between the fingers (see grasp_engage_depth_m). Pre-pick
-        # and lift keep the unengaged point, so the descent approaches the
-        # object diagonally from behind-above.
+        # and lift hover directly above this ENGAGED point: the descent is a
+        # pure vertical drop with the open jaws straddling the object.
         pick_target = target_point
         engage = float(self.get_parameter("grasp_engage_depth_m").value)
         if engage > 0.0 and bool(self.get_parameter("grasp_tilt_first").value):
@@ -2971,18 +2968,27 @@ class GeminiPickPlaceExecutor(Node):
             ("01_home", lambda: self.plan_and_execute_named_arm(home, "01_home")),
             ("02_open_gripper",
              lambda: self.plan_and_execute_named_gripper(open_name, "02_open_gripper")),
+            # Pre-pick hovers directly ABOVE the engaged pick point so the
+            # final 04 move is a pure VERTICAL drop (open jaws straddle the
+            # cube on the way down). The old behind-above pre-pick made the
+            # descent diagonal, which at the arm's reach boundary couples
+            # the axes: the reachable envelope is an arc through the cube,
+            # so on-target x came out high and on-target z came out short —
+            # never both. A vertical last move locks x in at height (where
+            # reach is easy) and spends the descent purely on z.
             ("03_pre_pick",
              lambda: self.plan_and_execute_pose(
-                 self.top_down_pose(target_point, pick_lift), "03_pre_pick")),
+                 self.top_down_pose(pick_target, pick_lift), "03_pre_pick")),
             ("04_pick",
              lambda: self.plan_and_execute_pose(
                  self.top_down_pose(pick_target, grasp_descent), "04_pick")),
             ("05_close_gripper",
              lambda: self._close_gripper_until_contact(
                  "05_close_gripper", expected_grip=grip_value)),
+            # Lift straight up with the object for the same reason.
             ("06_lift",
              lambda: self.plan_and_execute_pose(
-                 self.top_down_pose(target_point, pick_lift), "06_lift")),
+                 self.top_down_pose(pick_target, pick_lift), "06_lift")),
             # Only strike the 'show' pose when Gemini verification will
             # actually look at it. Best-effort either way: the SRDF 'show'
             # state fails planning on hardware (model finds a
