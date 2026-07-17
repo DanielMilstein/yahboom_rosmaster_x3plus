@@ -268,6 +268,16 @@ class GeminiPickPlaceExecutor(Node):
         self.declare_parameter("lidar_drive_correction", False)
         self.declare_parameter("lidar_correction_tol_m", 0.01)
         self.declare_parameter("lidar_correction_max_m", 0.05)
+        # Heading correction from the same scan match. The ICP has always
+        # measured dyaw, but only translation was ever driven out — small
+        # per-drive twists accumulated until the robot returned to its start
+        # spot visibly rotated. Rotate out any confident dyaw beyond tol
+        # (and below max, above which the match is suspect).
+        self.declare_parameter("lidar_yaw_correction", True)
+        self.declare_parameter("lidar_yaw_tol_rad", 0.015)
+        self.declare_parameter("lidar_yaw_max_rad", 0.12)
+        self.declare_parameter("drive_max_ang_speed_rps", 0.3)
+        self.declare_parameter("drive_yaw_tol_rad", 0.01)
         # Side-grasp engagement depth. Perception (Gemini pixel + depth)
         # returns a point on the object's NEAR face; a horizontal gripper
         # whose fingertips stop there leaves the whole object beyond the
@@ -1919,6 +1929,56 @@ class GeminiPickPlaceExecutor(Node):
         msg.header.frame_id = "base_link"
         self.cmd_vel_pub.publish(msg)
 
+    def rotate_relative_base(self, dyaw_rad):
+        """Closed-loop in-place rotation by dyaw_rad on odometry yaw,
+        mirroring drive_relative_base's structure. Positive = CCW."""
+        if abs(dyaw_rad) < 1e-4:
+            return True
+        odom0 = self.snapshot_odom()
+        if odom0 is None:
+            self.get_logger().warn(
+                "rotate_relative_base: no odometry; skipping rotation"
+            )
+            return False
+        goal = odom0["yaw"] + float(dyaw_rad)
+        kp = float(self.get_parameter("drive_kp").value)
+        max_w = float(self.get_parameter("drive_max_ang_speed_rps").value)
+        tol = float(self.get_parameter("drive_yaw_tol_rad").value)
+        timeout = float(self.get_parameter("drive_timeout_sec").value)
+        period = 0.05  # 20 Hz
+        t0 = time.time()
+        while time.time() - t0 < timeout:
+            od = self.snapshot_odom(wait_sec=0.2)
+            if od is None:
+                break
+            err = math.atan2(
+                math.sin(goal - od["yaw"]), math.cos(goal - od["yaw"])
+            )
+            if abs(err) <= tol:
+                self.publish_zero_velocity()
+                self.get_logger().info(
+                    f"rotate_relative_base: arrived "
+                    f"(err={math.degrees(err):+.2f}°)"
+                )
+                return True
+            w = max(-max_w, min(max_w, kp * err))
+            # Mecanum static friction stalls tiny angular commands; floor
+            # the magnitude so the last fraction of a degree still moves.
+            if abs(w) < 0.08:
+                w = math.copysign(0.08, w)
+            twist = TwistStamped()
+            twist.header.stamp = self.get_clock().now().to_msg()
+            twist.header.frame_id = "base_link"
+            twist.twist.angular.z = w
+            self.cmd_vel_pub.publish(twist)
+            time.sleep(period)
+        self.publish_zero_velocity()
+        self.get_logger().warn(
+            "rotate_relative_base: stopped before reaching the yaw goal "
+            "(timeout or odometry dropout)"
+        )
+        return False
+
     def find_feasible_drive_for_point(
         self, point, lift_zs, max_dx=None, engage_last_lift=False
     ):
@@ -2242,6 +2302,21 @@ class GeminiPickPlaceExecutor(Node):
         )
         if not bool(self.get_parameter("lidar_drive_correction").value):
             return
+        confident = rms <= 0.035 and n_pairs >= 100
+        # Heading first: the drive intended zero yaw change, so any measured
+        # dyaw is real base twist. Rotating it out here keeps per-drive
+        # twists from accumulating into a visibly rotated robot (and keeps
+        # the dead-reckoned target frames honest — the stored coordinates
+        # were computed assuming the heading never changed).
+        if confident and bool(self.get_parameter("lidar_yaw_correction").value):
+            yaw_tol = float(self.get_parameter("lidar_yaw_tol_rad").value)
+            yaw_max = float(self.get_parameter("lidar_yaw_max_rad").value)
+            if yaw_tol < abs(dyaw) <= yaw_max:
+                self.get_logger().info(
+                    f"[{label}] lidar yaw correction: rotating "
+                    f"{math.degrees(-dyaw):+.1f}° to restore heading"
+                )
+                self.rotate_relative_base(-dyaw)
         tol = float(self.get_parameter("lidar_correction_tol_m").value)
         cap = float(self.get_parameter("lidar_correction_max_m").value)
         err = math.hypot(ex, ey)
@@ -2568,15 +2643,28 @@ class GeminiPickPlaceExecutor(Node):
                 f"({dx:+.3f}, {dy:+.3f}, dyaw={math.degrees(dyaw):+.1f}°) "
                 f"rms={rms:.3f} pairs={n_pairs}"
             )
-            if err <= 0.015:
+            yaw_corr = bool(self.get_parameter("lidar_yaw_correction").value)
+            yaw_tol = float(self.get_parameter("lidar_yaw_tol_rad").value)
+            yaw_max = float(self.get_parameter("lidar_yaw_max_rad").value)
+            yaw_ok = (not yaw_corr) or abs(dyaw) <= yaw_tol
+            # The old code returned as soon as POSITION converged, so a
+            # well-placed but twisted robot never got its heading fixed.
+            if err <= 0.015 and yaw_ok:
                 return
-            if rms > 0.035 or n_pairs < 100 or err > 0.15:
+            if rms > 0.035 or n_pairs < 100 or err > 0.15 or abs(dyaw) > yaw_max:
                 self.get_logger().warn(
                     "return-to-anchor: low-confidence or oversized offset; "
                     "not correcting"
                 )
                 return
-            self.drive_relative_base(-dx, -dy)
+            if not yaw_ok:
+                self.get_logger().info(
+                    f"return-to-anchor: rotating {math.degrees(-dyaw):+.1f}° "
+                    "to restore the start heading"
+                )
+                self.rotate_relative_base(-dyaw)
+            if err > 0.015:
+                self.drive_relative_base(-dx, -dy)
 
     def plan_and_execute_gripper_value(self, grip_joint_rad, label):
         if self.gripper_component is None or self.moveit is None:
