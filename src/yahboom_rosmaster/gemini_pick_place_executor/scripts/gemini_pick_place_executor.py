@@ -353,6 +353,17 @@ class GeminiPickPlaceExecutor(Node):
             "gripper_action_topic",
             "/gripper_controller/follow_joint_trajectory",
         )
+        # Direct-controller action for the start-collision recovery move.
+        self.declare_parameter(
+            "arm_action_topic",
+            "/arm_controller/follow_joint_trajectory",
+        )
+        # If the initial stow can't plan (typically: the arm woke up parked
+        # in a model self-collision, e.g. wrist against the lidar housing —
+        # OMPL then rejects every start state), recover by sending a direct
+        # joint trajectory to the safe 'up' pose (all zeros) and re-planning
+        # once. Same motion as the established manual recovery.
+        self.declare_parameter("start_collision_recovery", True)
         # On verification failure (or any pick-phase failure), reset the gripper,
         # restow, re-perceive, and try the pick again — up to this many times.
         self.declare_parameter("max_pick_attempts", 3)
@@ -410,6 +421,8 @@ class GeminiPickPlaceExecutor(Node):
         self.odom_event = threading.Event()
         self.latest_joint_state = None
         self._gripper_action_client = None
+        self._arm_action_client = None
+        self._stow_recovery_attempted = False
 
         image_topic = self.get_parameter("image_topic").value
         pixel_topic = self.get_parameter("pixel_topic").value
@@ -1762,11 +1775,86 @@ class GeminiPickPlaceExecutor(Node):
         self.arm_component.set_start_state_to_current_state()
         self.arm_component.set_goal_state(robot_state=state)
         ok = self.plan_and_execute(self.arm_component, arm_name, label)
+        if (
+            not ok
+            and not self._stow_recovery_attempted
+            and bool(self.get_parameter("start_collision_recovery").value)
+        ):
+            # A stow that can't plan usually means the arm woke up parked in
+            # a model self-collision (e.g. wrist against the lidar housing)
+            # and OMPL rejects every start state. Escape with a direct joint
+            # move to the safe 'up' pose — the same motion as the manual
+            # recovery — then re-plan the stow once.
+            self._stow_recovery_attempted = True
+            self.get_logger().warn(
+                f"[{label}] stow could not plan — start state likely in "
+                "collision; recovering with a direct joint move to 'up' "
+                "and re-planning once"
+            )
+            if self._send_arm_joints_direct(
+                [0.0, 0.0, 0.0, 0.0, 0.0], f"{label}_recovery"
+            ):
+                time.sleep(1.0)
+                self.arm_component.set_start_state_to_current_state()
+                self.arm_component.set_goal_state(robot_state=state)
+                ok = self.plan_and_execute(self.arm_component, arm_name, label)
         if ok:
             settle = float(self.get_parameter("stow_settle_sec").value)
             if settle > 0.0:
                 time.sleep(settle)
         return ok
+
+    def _send_arm_joints_direct(self, values, label, duration_s=3.5):
+        """Send a single-waypoint trajectory for arm_joint1..5 straight to the
+        arm controller's FollowJointTrajectory action, bypassing MoveIt. Used
+        only for start-collision recovery, where the planner refuses to work
+        from the current state at all. Returns True when the action succeeds.
+        """
+        if self._arm_action_client is None:
+            topic = str(self.get_parameter("arm_action_topic").value)
+            self._arm_action_client = ActionClient(
+                self, FollowJointTrajectory, topic
+            )
+        if not self._arm_action_client.wait_for_server(timeout_sec=2.0):
+            self.get_logger().error(
+                f"[{label}] arm action server "
+                f"{self.get_parameter('arm_action_topic').value!r} unavailable"
+            )
+            return False
+
+        goal = FollowJointTrajectory.Goal()
+        goal.trajectory.joint_names = [
+            "arm_joint1", "arm_joint2", "arm_joint3", "arm_joint4", "arm_joint5",
+        ]
+        point = JointTrajectoryPoint()
+        point.positions = [float(v) for v in values]
+        sec = int(duration_s)
+        point.time_from_start.sec = sec
+        point.time_from_start.nanosec = int((duration_s - sec) * 1e9)
+        goal.trajectory.points.append(point)
+
+        send_future = self._arm_action_client.send_goal_async(goal)
+        deadline = time.time() + 5.0
+        while rclpy.ok() and not send_future.done() and time.time() < deadline:
+            time.sleep(0.01)
+        if not send_future.done():
+            self.get_logger().error(f"[{label}] send_goal_async timed out")
+            return False
+        goal_handle = send_future.result()
+        if goal_handle is None or not goal_handle.accepted:
+            self.get_logger().error(f"[{label}] arm recovery goal rejected")
+            return False
+
+        result_future = goal_handle.get_result_async()
+        deadline = time.time() + duration_s + 3.0
+        while rclpy.ok() and not result_future.done() and time.time() < deadline:
+            time.sleep(0.01)
+        if not result_future.done():
+            self.get_logger().warn(
+                f"[{label}] arm recovery result wait timed out"
+            )
+            return False
+        return True
 
     def target_outside_reach_window(self, point):
         x = float(point.point.x)

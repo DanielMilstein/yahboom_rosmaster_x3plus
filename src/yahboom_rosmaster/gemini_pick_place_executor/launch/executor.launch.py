@@ -40,6 +40,8 @@ FORWARDED_PARAMS = [
     ("lidar_correction_max_m", "0.05"),
     ("grasp_empty_tol_rad", "0.15"),
     ("empty_grasp_freeze_sec", "0.0"),
+    ("start_collision_recovery", "true"),
+    ("arm_action_topic", "/arm_controller/follow_joint_trajectory"),
     ("lidar_wall_collision", "true"),
     ("lidar_wall_height_m", "0.13"),
     # The arena walls stand on the drive surface (base_footprint z=0).
