@@ -57,7 +57,12 @@ class PerceptionBridge(Node):
         # sim behavior. Relative measurements (object height, grasp width)
         # cancel the offset; only absolute target points shift. Tune from a
         # no-drive perceive-only run: offset = (measured_pos - perceived_pos).
-        self.declare_parameter("correction_offset_xyz", [0.125, 0.037, 0.0])
+        # NOTE: the +0.125 x offset that briefly lived here was fitted to a
+        # wrong-surface depth artifact (spiral search sampling platform/wall
+        # pixels when the white cube's depth drops out) — it chased a moving
+        # target and poisons the plane-ranging path. x belongs at 0; the y
+        # trim is a real lateral extrinsic bias and stays.
+        self.declare_parameter("correction_offset_xyz", [0.0, 0.037, 0.0])
         # Camera pitch trim (rad), applied to the optical-frame point before
         # the TF to base. Corrects a physically mis-pitched camera mount: the
         # signature is perception reading LOW and SHORT, with both errors
@@ -218,9 +223,15 @@ class PerceptionBridge(Node):
     def pixel_callback(self, msg):
         u = int(round(msg.point.x))
         v = int(round(msg.point.y))
+        # point.z doubles as the mode switch: z > 0 requests plane ranging
+        # (intersect the pixel ray with the horizontal base-frame plane at
+        # that height, no depth involved); z <= 0 keeps the depth path.
+        plane_z = float(msg.point.z)
         self.last_debug_pixel = (u, v)
         self.publish_debug_image()
-        self.project_and_publish(u, v)
+        self.project_and_publish(
+            u, v, plane_z=plane_z if plane_z > 0.0 else None
+        )
 
     def publish_debug_pixel(self):
         u = int(self.get_parameter("debug_pixel_u").value)
@@ -230,10 +241,15 @@ class PerceptionBridge(Node):
             self.publish_debug_image()
             self.project_and_publish(u, v, throttle_errors=True)
 
-    def project_and_publish(self, u, v, throttle_errors=False):
+    def project_and_publish(self, u, v, throttle_errors=False, plane_z=None):
         try:
-            camera_point = self.project_2d_pixel_to_3d_point(u, v)
-            base_point = self.transform_camera_point_to_base(camera_point)
+            if plane_z is not None:
+                camera_point, base_point = self.project_pixel_plane_to_base(
+                    u, v, plane_z
+                )
+            else:
+                camera_point = self.project_2d_pixel_to_3d_point(u, v)
+                base_point = self.transform_camera_point_to_base(camera_point)
         except Exception as exc:
             if throttle_errors:
                 self.get_logger().warn(str(exc), throttle_duration_sec=2.0)
@@ -255,14 +271,96 @@ class PerceptionBridge(Node):
         self.camera_point_pub.publish(camera_point)
         self.base_point_pub.publish(base_point)
         self.publish_marker(base_point)
+        mode = f"plane@{plane_z:.3f}" if plane_z is not None else "depth"
         self.get_logger().info(
-            f"pixel=({u}, {v}) depth_pixel={self.last_depth_pixel} "
+            f"pixel=({u}, {v}) mode={mode} depth_pixel={self.last_depth_pixel} "
             f"camera=({camera_point.point.x:.3f}, "
             f"{camera_point.point.y:.3f}, {camera_point.point.z:.3f}) "
             f"{self.base_frame}=({base_point.point.x:.3f}, "
             f"{base_point.point.y:.3f}, {base_point.point.z:.3f})"
         )
         return base_point
+
+    def project_pixel_plane_to_base(self, u, v, plane_z):
+        """Project (u, v) by intersecting its viewing ray with the
+        horizontal base-frame plane z=plane_z. Depth is never consulted:
+        this is the ranging path for objects whose depth pixels drop out
+        (the 30mm white cube at 0.6-1.0 m), where the depth spiral would
+        silently sample a NEIGHBORING surface and corrupt x by a scene-
+        dependent amount. The ray geometry is calibrated (camera pitch
+        verified against multi-range z data) and the plane height is
+        tape-measured, so x/y land within ~2 cm with no depth dependency —
+        and it keeps working inside the Astra's 0.6 m minimum depth range.
+        Returns (camera_point, base_point); raises on degenerate rays.
+        """
+        camera_info = self.capture_camera_intrinsics()
+        if camera_info is None:
+            raise RuntimeError("No camera_info received yet")
+        if u < 0 or v < 0 or u >= camera_info.width or v >= camera_info.height:
+            raise RuntimeError(
+                f"Pixel ({u}, {v}) is outside image "
+                f"{camera_info.width}x{camera_info.height}"
+            )
+        fx, fy, cx, cy = self.get_projection_intrinsics(camera_info)
+        if fx == 0.0 or fy == 0.0:
+            raise RuntimeError("camera_info has invalid focal length")
+
+        # Optical-frame ray through the pixel (x right, y down, z forward),
+        # pitch-trimmed exactly like the depth path.
+        dx = (float(u) - cx) / fx
+        dy = (float(v) - cy) / fy
+        dz = 1.0
+        pitch = float(self.get_parameter("pitch_correction_rad").value)
+        if pitch != 0.0:
+            c, s = math.cos(pitch), math.sin(pitch)
+            dy, dz = c * dy - s * dz, s * dy + c * dz
+
+        stamp = self.latest_synced_stamp or self.get_clock().now().to_msg()
+        frame = camera_info.header.frame_id
+        origin = PointStamped()
+        origin.header.stamp = stamp
+        origin.header.frame_id = frame
+        tip = PointStamped()
+        tip.header.stamp = stamp
+        tip.header.frame_id = frame
+        tip.point.x, tip.point.y, tip.point.z = dx, dy, dz
+        # Both endpoints go through the standard transform (incl. the
+        # extrinsic correction offset): the offset cancels in the direction
+        # and correctly shifts the ray origin.
+        origin_b = self.transform_camera_point_to_base(origin)
+        tip_b = self.transform_camera_point_to_base(tip)
+        rdx = tip_b.point.x - origin_b.point.x
+        rdy = tip_b.point.y - origin_b.point.y
+        rdz = tip_b.point.z - origin_b.point.z
+        norm = math.sqrt(rdx * rdx + rdy * rdy + rdz * rdz)
+        if norm < 1e-6:
+            raise RuntimeError("plane ranging: degenerate ray")
+        if rdz / norm > -0.087:
+            # Ray must descend toward the plane by at least ~5 deg or the
+            # intersection amplifies pixel noise into meters.
+            raise RuntimeError(
+                f"plane ranging: ray too grazing (dz/|d|={rdz / norm:+.3f})"
+            )
+        s_par = (float(plane_z) - origin_b.point.z) / rdz
+        if s_par <= 0.0 or s_par * norm > 5.0:
+            raise RuntimeError(
+                f"plane ranging: implausible intersection (range "
+                f"{s_par * norm:.2f} m)"
+            )
+
+        base_point = PointStamped()
+        base_point.header.stamp = stamp
+        base_point.header.frame_id = self.base_frame
+        base_point.point.x = origin_b.point.x + s_par * rdx
+        base_point.point.y = origin_b.point.y + s_par * rdy
+        base_point.point.z = origin_b.point.z + s_par * rdz
+        camera_point = PointStamped()
+        camera_point.header.stamp = stamp
+        camera_point.header.frame_id = frame
+        camera_point.point.x = dx * s_par
+        camera_point.point.y = dy * s_par
+        camera_point.point.z = dz * s_par
+        return camera_point, base_point
 
     def project_2d_pixel_to_3d_point(self, u, v):
         depth_msg = self.capture_latest_depth_frame()
@@ -308,7 +406,7 @@ class PerceptionBridge(Node):
             return depth_m, u, v
 
         radius = int(self.get_parameter("depth_search_radius").value)
-        best = None
+        samples = []
         for dy in range(-radius, radius + 1):
             sample_v = v + dy
             if sample_v < 0 or sample_v >= depth_msg.height:
@@ -320,17 +418,31 @@ class PerceptionBridge(Node):
                 sample_depth = self.depth_at_pixel(depth_msg, sample_u, sample_v)
                 if not math.isfinite(sample_depth) or sample_depth <= 0.0:
                     continue
-                distance_sq = dx * dx + dy * dy
-                if best is None or distance_sq < best[0]:
-                    best = (distance_sq, sample_depth, sample_u, sample_v)
+                samples.append((sample_depth, sample_u, sample_v))
 
-        if best is None:
+        if not samples:
             return depth_m, u, v
 
-        _, sample_depth, sample_u, sample_v = best
-        self.get_logger().info(
-            f"Using nearest valid depth pixel ({sample_u}, {sample_v}) for requested pixel ({u}, {v})"
-        )
+        # MEDIAN of the valid neighborhood, not the nearest single pixel:
+        # around a dropped-out object the nearest valid sample is usually a
+        # DIFFERENT surface (platform in front/behind, wall edge), which
+        # silently poisons the range by a scene-dependent amount — the root
+        # cause of the wandering x error this bridge chased with offsets.
+        samples.sort(key=lambda s: s[0])
+        sample_depth, sample_u, sample_v = samples[len(samples) // 2]
+        dist = math.hypot(sample_u - u, sample_v - v)
+        if dist > 8.0:
+            self.get_logger().warn(
+                f"depth fallback: sampled ({sample_u}, {sample_v}), "
+                f"{dist:.0f}px from requested ({u}, {v}) — likely a "
+                "different surface; treat this range as suspect",
+                throttle_duration_sec=2.0,
+            )
+        else:
+            self.get_logger().info(
+                f"Using median neighborhood depth pixel ({sample_u}, "
+                f"{sample_v}) for requested pixel ({u}, {v})"
+            )
         return sample_depth, sample_u, sample_v
 
     def depth_at_pixel(self, depth_msg, u, v):

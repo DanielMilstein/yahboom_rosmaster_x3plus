@@ -29,7 +29,19 @@ FORWARDED_PARAMS = [
     ("grasp_tilt_first", "false"),
     ("base_search_order", "min_reach"),
     ("base_search_ideal_reach_m", "0.33"),
-    ("reperceive_min_target_x_m", "0.55"),
+    # 0.62, not 0.55: 0.55 parked the close perception inside the Astra's
+    # ~0.6 m minimum depth range, maximizing dropouts.
+    ("reperceive_min_target_x_m", "0.62"),
+    # Ground-plane ranging: target x/y from bbox-bottom ray x plane
+    # z=table_z_m — immune to the white cube's depth dropouts. Hardware
+    # should pass true (with table_z_source:=param and a taped table_z_m).
+    ("plane_ranging", "false"),
+    # Lidar front-wall x reference: gap logged every perception; set the
+    # taped wall-face -> cube-near-face distance to gate the vision x,
+    # wall_ref_override:=true to substitute it (fixed demo placements).
+    ("wall_to_target_x_m", "-1.0"),
+    ("wall_ref_tol_m", "0.06"),
+    ("wall_ref_override", "false"),
     ("scan_topic", "/scan"),
     ("lidar_audit", "true"),
     ("lidar_min_range_m", "0.25"),

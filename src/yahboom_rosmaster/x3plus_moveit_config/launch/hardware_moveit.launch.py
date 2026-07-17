@@ -147,7 +147,11 @@ def generate_launch_description() -> LaunchDescription:
                 # range. offset = real - perceived. Fine-tune live with:
                 #   ros2 param set /x3plus_perception_bridge \
                 #       correction_offset_xyz "[x, y, z]"
-                "correction_offset_xyz": [0.016, 0.037, 0.0],
+                # x belongs at 0: the +0.125/+0.016 x fudges chased a
+                # wrong-surface depth artifact (spiral sampling neighboring
+                # pixels on cube dropouts) and poison the plane-ranging
+                # path. The y trim is a real lateral extrinsic and stays.
+                "correction_offset_xyz": [0.0, 0.037, 0.0],
                 # Camera pitch trim: perception reading LOW+SHORT with the
                 # error growing with range = camera physically pitched down
                 # vs the URDF. Freeze-tape 2026-07-13 measured ~0.125 rad

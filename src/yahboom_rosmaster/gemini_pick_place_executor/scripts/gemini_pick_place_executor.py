@@ -250,7 +250,26 @@ class GeminiPickPlaceExecutor(Node):
         # depth camera's ~0.6 m minimum-range blind zone — so the post-drive
         # re-perception can actually see it. The corrected drive then closes
         # the remaining distance with fresh, close-range perception.
-        self.declare_parameter("reperceive_min_target_x_m", 0.55)
+        # 0.62, not 0.55: the close perception used to park the cube right
+        # inside the Astra's ~0.6 m minimum depth range, maximizing dropouts.
+        self.declare_parameter("reperceive_min_target_x_m", 0.62)
+        # Ground-plane ranging for the target's x/y: intersect the bbox
+        # bottom-center pixel ray with the tape-measured platform plane
+        # (table_z_m) instead of trusting depth. Depth dropouts on the white
+        # cube made the bridge's spiral sample NEIGHBORING surfaces, moving
+        # x by a scene-dependent amount — no constant offset can fix that.
+        # z stays on the (calibrated, accurate) depth path.
+        self.declare_parameter("plane_ranging", False)
+        # Lidar front-wall x reference: the gap (x_target - x_wall) is
+        # invariant to robot pose, so it is logged on every perception for
+        # calibration. Set wall_to_target_x_m to the taped wall-face ->
+        # cube-near-face distance to GATE the vision x against the lidar
+        # (warn beyond wall_ref_tol_m); wall_ref_override additionally
+        # replaces the vision x with wall_x + wall_to_target_x_m — only
+        # valid when the cube is placed at the taped spot (fixed demo).
+        self.declare_parameter("wall_to_target_x_m", -1.0)
+        self.declare_parameter("wall_ref_tol_m", 0.06)
+        self.declare_parameter("wall_ref_override", False)
         # Lidar scan-match drive audit. Before/after each base drive the
         # full scan (front + sides — no flat-landmark assumption; the thing
         # ahead is a 3D printer) is ICP-matched to measure the TRUE planar
@@ -929,6 +948,11 @@ class GeminiPickPlaceExecutor(Node):
         target_point = self.project_pixel("target", target_pixel, image.header.frame_id)
         if target_point is None:
             return None
+        if bool(self.get_parameter("plane_ranging").value):
+            refined = self._plane_range_target(plan, image, target_point)
+            if refined is not None:
+                target_point = refined
+        self._wall_reference_check(target_point)
         destination_point = self.project_pixel(
             "destination", destination_pixel, image.header.frame_id
         )
@@ -1178,7 +1202,7 @@ class GeminiPickPlaceExecutor(Node):
         )
         return True
 
-    def project_pixel(self, name, pixel, frame_id):
+    def project_pixel(self, name, pixel, frame_id, plane_z=None):
         """Ask the perception bridge to project one pixel to base frame.
         Retried in place (fresh depth frames arrive continuously, so a bad
         depth read or TF hiccup usually clears within a frame or two) —
@@ -1199,7 +1223,9 @@ class GeminiPickPlaceExecutor(Node):
             msg.header.frame_id = frame_id
             msg.point.x = float(pixel[0])
             msg.point.y = float(pixel[1])
-            msg.point.z = 0.0
+            # point.z is the bridge's mode switch: > 0 = plane-ranging
+            # height in base frame, <= 0 = depth projection.
+            msg.point.z = float(plane_z) if plane_z is not None else 0.0
             self.pixel_pub.publish(msg)
 
             if not self.base_point_event.wait(timeout=timeout_sec):
@@ -2962,6 +2988,124 @@ class GeminiPickPlaceExecutor(Node):
                 return False
         return True
 
+    def _fit_front_wall_x(self):
+        """Fit the front wall's base-frame x from the latest scan (narrow
+        forward corridor, tight-cluster re-fit). Returns (wall_x, n_points)
+        or None. Shared by the collision publisher and the wall-referenced
+        x sanity gate. The corridor half-width must stay below the arena's
+        side wall distance (~0.21 m) or the side walls pollute the median."""
+        pts = self._lidar_scan_points()
+        if pts is None:
+            return None
+        import numpy as np
+
+        sel = pts[
+            (np.abs(pts[:, 1]) < 0.15) & (pts[:, 0] > 0.15) & (pts[:, 0] < 1.2)
+        ]
+        if len(sel) < 15:
+            return None
+        wall_x = float(np.median(sel[:, 0]))
+        # A real wall is a tight x-cluster; re-fit on the points near the
+        # median so stray returns (cube edge, corner spill) don't skew it.
+        near = sel[np.abs(sel[:, 0] - wall_x) < 0.06]
+        if len(near) < 15:
+            return None
+        return float(np.median(near[:, 0])), len(near)
+
+    def _plane_range_target(self, plan, image, depth_point):
+        """Ground-plane ranging for the target's x/y: intersect the bbox
+        bottom-center pixel ray with the tape-measured platform plane
+        (table_z_m). Depth never enters, so the white cube's depth dropouts
+        (which made the bridge's spiral sample neighboring surfaces and
+        move x by a scene-dependent amount) cannot corrupt x. z stays on
+        the depth path, which is calibrated and accurate. Returns a
+        corrected copy of depth_point, or None to keep it unchanged."""
+        box = plan.get("target_object", {}).get("box")
+        if not box or len(box) != 4:
+            self.get_logger().warn(
+                "plane ranging: no target bbox from Gemini; keeping depth x/y"
+            )
+            return None
+        table_z = float(self.get_parameter("table_z_m").value)
+        ymin, xmin, ymax, xmax = [float(v) for v in box]
+        x_mid = 0.5 * (xmin + xmax)
+        bottom_pixel = normalized_point_to_pixel(
+            [ymax, x_mid], image.width, image.height
+        )
+        center_pixel = normalized_point_to_pixel(
+            [0.5 * (ymin + ymax), x_mid], image.width, image.height
+        )
+        bottom_pt = self.project_pixel(
+            "plane_bottom", bottom_pixel, image.header.frame_id,
+            plane_z=table_z,
+        )
+        if bottom_pt is None:
+            self.get_logger().warn(
+                "plane ranging: bottom-pixel plane projection failed; "
+                "keeping depth x/y"
+            )
+            return None
+        # Cross-check variant: the bbox CENTER sits at ~cube mid-height;
+        # the two estimates should agree to ~1 cm when the pitch and plane
+        # height are right.
+        center_pt = self.project_pixel(
+            "plane_center", center_pixel, image.header.frame_id,
+            plane_z=table_z + 0.015,
+        )
+        center_txt = (
+            f"{center_pt.point.x:.3f}" if center_pt is not None else "n/a"
+        )
+        self.get_logger().info(
+            f"plane ranging: x_plane_bottom={bottom_pt.point.x:.3f} "
+            f"x_plane_center={center_txt} x_depth={depth_point.point.x:.3f} "
+            f"(y plane-depth delta {bottom_pt.point.y - depth_point.point.y:+.3f})"
+        )
+        if abs(bottom_pt.point.x - depth_point.point.x) > 0.05:
+            self.get_logger().warn(
+                f"plane vs depth x disagree by "
+                f"{bottom_pt.point.x - depth_point.point.x:+.3f} m — depth "
+                "likely sampled a different surface; trusting the plane"
+            )
+        refined = deepcopy(depth_point)
+        refined.point.x = float(bottom_pt.point.x)
+        refined.point.y = float(bottom_pt.point.y)
+        return refined
+
+    def _wall_reference_check(self, target_point):
+        """Cross-check (and optionally override) the vision x against the
+        lidar-fitted front wall. The gap (x_target - x_wall) is invariant to
+        robot pose, so it is logged every perception for calibration; with
+        wall_to_target_x_m taped in, a gap disagreement beyond
+        wall_ref_tol_m warns, and wall_ref_override replaces the vision x
+        with the lidar-referenced value (fixed demo placements only)."""
+        fit = self._fit_front_wall_x()
+        if fit is None:
+            return
+        wall_x, n_fit = fit
+        gap = float(target_point.point.x) - wall_x
+        taped = float(self.get_parameter("wall_to_target_x_m").value)
+        self.get_logger().info(
+            f"wall reference: wall_x={wall_x:.3f} ({n_fit} pts), "
+            f"measured target-wall gap={gap:+.3f}"
+            + (f", taped gap={taped:+.3f}" if taped >= 0.0 else "")
+        )
+        if taped < 0.0:
+            return
+        tol = float(self.get_parameter("wall_ref_tol_m").value)
+        x_ref = wall_x + taped
+        if abs(gap - taped) > tol:
+            self.get_logger().warn(
+                f"wall reference: vision x={target_point.point.x:.3f} is "
+                f"{gap - taped:+.3f} m off the lidar-referenced "
+                f"x={x_ref:.3f} (tol {tol:.3f})"
+            )
+        if bool(self.get_parameter("wall_ref_override").value):
+            self.get_logger().info(
+                f"wall reference override: x {target_point.point.x:.3f} -> "
+                f"{x_ref:.3f}"
+            )
+            target_point.point.x = x_ref
+
     def _remove_front_wall_collision(self, label, reason):
         """Clear any previously published front-wall box. Without this a
         stale wall (fitted before a drive, or mis-fitted) stays in the
@@ -2990,32 +3134,13 @@ class GeminiPickPlaceExecutor(Node):
         pollute the median."""
         if not bool(self.get_parameter("lidar_wall_collision").value):
             return
-        pts = self._lidar_scan_points()
-        if pts is None:
-            self._remove_front_wall_collision(label, "no lidar scan available")
-            return
-        import numpy as np
-
-        sel = pts[
-            (np.abs(pts[:, 1]) < 0.15) & (pts[:, 0] > 0.15) & (pts[:, 0] < 1.2)
-        ]
-        if len(sel) < 15:
+        fit = self._fit_front_wall_x()
+        if fit is None:
             self._remove_front_wall_collision(
-                label, "front wall not visible in scan"
+                label, "front wall not visible in scan (or fit too scattered)"
             )
             return
-        wall_x = float(np.median(sel[:, 0]))
-        # A real wall is a tight x-cluster; re-fit on the points near the
-        # median so stray returns (cube edge, corner spill) don't skew it.
-        near = sel[np.abs(sel[:, 0] - wall_x) < 0.06]
-        if len(near) < 15:
-            self._remove_front_wall_collision(
-                label, f"forward points too scattered to be a wall "
-                f"(median x={wall_x:.3f}, {len(near)}/{len(sel)} in cluster)"
-            )
-            return
-        wall_x = float(np.median(near[:, 0]))
-        sel = near
+        wall_x, n_fit = fit
         if wall_x < 0.24:
             # After deep approach drives the wall can end up hugging the
             # chassis; a box there overlaps the robot's own collision body
@@ -3050,7 +3175,7 @@ class GeminiPickPlaceExecutor(Node):
         self.collision_pub.publish(obj)
         self.get_logger().info(
             f"[{label}] front wall collision object at x={wall_x:.3f} "
-            f"({len(sel)} scan points)"
+            f"({n_fit} scan points)"
         )
 
     def _resolve_table_z(self, measured_z_bottom):
