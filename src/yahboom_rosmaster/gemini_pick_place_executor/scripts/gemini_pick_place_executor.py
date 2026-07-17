@@ -1791,10 +1791,30 @@ class GeminiPickPlaceExecutor(Node):
                 "collision; recovering with a direct joint move to 'up' "
                 "and re-planning once"
             )
+            j2_before = self._get_joint_position("arm_joint2")
             if self._send_arm_joints_direct(
                 [0.0, 0.0, 0.0, 0.0, 0.0], f"{label}_recovery"
             ):
                 time.sleep(1.0)
+                j2_after = self._get_joint_position("arm_joint2")
+                if (
+                    j2_before is not None
+                    and j2_after is not None
+                    and abs(j2_before) > 0.10
+                    and abs(j2_after - j2_before) < 0.03
+                ):
+                    # The controller reported success but the joint never
+                    # moved: the bridge is likely not talking to the servos
+                    # at all (seen when serial_port points at the wrong
+                    # device — the bridge log then shows
+                    # 'STM32 firmware version: -1').
+                    self.get_logger().error(
+                        f"[{label}] recovery commanded but arm_joint2 did "
+                        f"not move ({j2_before:+.3f} -> {j2_after:+.3f}) — "
+                        "the servo bridge looks dead. Check the bridge log "
+                        "for 'STM32 firmware version: -1' and verify "
+                        "serial_port (expansion board = /dev/myserial)."
+                    )
                 self.arm_component.set_start_state_to_current_state()
                 self.arm_component.set_goal_state(robot_state=state)
                 ok = self.plan_and_execute(self.arm_component, arm_name, label)
