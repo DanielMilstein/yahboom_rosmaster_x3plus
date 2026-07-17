@@ -57,7 +57,7 @@ class PerceptionBridge(Node):
         # sim behavior. Relative measurements (object height, grasp width)
         # cancel the offset; only absolute target points shift. Tune from a
         # no-drive perceive-only run: offset = (measured_pos - perceived_pos).
-        self.declare_parameter("correction_offset_xyz", [0.0, 0.0, 0.0])
+        self.declare_parameter("correction_offset_xyz", [0.125, 0.037, 0.0])
         # Camera pitch trim (rad), applied to the optical-frame point before
         # the TF to base. Corrects a physically mis-pitched camera mount: the
         # signature is perception reading LOW and SHORT, with both errors
