@@ -3150,6 +3150,35 @@ class GeminiPickPlaceExecutor(Node):
                     "pixel refine: segmentation unconvincing; using raw "
                     "Gemini bbox pixels"
                 )
+        # The plane base is the BED UNDER THE OBJECT, measured fresh each
+        # perception: the printer bed moves in z between prints, so any
+        # taped constant goes stale (observed: bed at ~0.18 vs taped 0.16
+        # = 5-7 cm of x shortfall through the grazing intersection, and
+        # fingertips parked below the bed surface). Depth on the dark bed
+        # is reliable — the dropouts afflict the white object, not the
+        # bed — and the z axis is calibrated. Probe a few px below the
+        # object's base pixel; guard against the param by +-6 cm.
+        probe_pixel = (
+            bottom_pixel[0],
+            min(image.height - 1, bottom_pixel[1] + 6),
+        )
+        probe = self.project_pixel(
+            "bed_probe", probe_pixel, image.header.frame_id
+        )
+        if probe is not None and abs(float(probe.point.z) - table_z) <= 0.06:
+            measured_bed = float(probe.point.z)
+            if abs(measured_bed - table_z) > 0.005:
+                self.get_logger().info(
+                    f"plane ranging: bed height measured {measured_bed:.3f} "
+                    f"(param {table_z:.3f}); using the measurement"
+                )
+            table_z = measured_bed
+        elif probe is not None:
+            self.get_logger().warn(
+                f"plane ranging: bed probe z={float(probe.point.z):.3f} "
+                f"disagrees with param {table_z:.3f} by more than 6 cm; "
+                "keeping the param plane"
+            )
         # PRIMARY = bbox CENTER at the object's mid-height plane: the
         # center pixel is a robust interior point, whereas the bbox bottom
         # edge rides the object/shadow boundary and bias-tapes low (= x
@@ -3412,10 +3441,14 @@ class GeminiPickPlaceExecutor(Node):
             )
             return table_z_param
         table_z = float(measured_z_bottom)
-        if abs(table_z - table_z_param) > 0.03:
+        # 5 cm, not 3: the printer bed genuinely moves 2-4 cm in z between
+        # prints (observed 0.16 -> 0.18), and the measured floor must
+        # track it — while the wrong-surface depth failures this guard
+        # exists for were 6-8 cm off and still get rejected.
+        if abs(table_z - table_z_param) > 0.05:
             self.get_logger().warn(
                 f"perceived z_bottom={table_z:.3f} disagrees with "
-                f"table_z_m={table_z_param:.3f} by more than 3cm; "
+                f"table_z_m={table_z_param:.3f} by more than 5cm; "
                 "distrusting perception and using the param floor"
             )
             return table_z_param
