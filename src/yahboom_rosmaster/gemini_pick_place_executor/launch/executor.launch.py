@@ -44,6 +44,12 @@ FORWARDED_PARAMS = [
     ("wall_to_target_x_m", "-1.0"),
     ("wall_ref_tol_m", "0.06"),
     ("wall_ref_override", "false"),
+    # Slicer-referenced x: pass print_y_m (bed-front -> object center from
+    # the slicer, per job) to derive x from the live lidar wall fit; the
+    # only taped constant is the fixed wall->bed-front distance.
+    ("bed_offset_x_m", "0.15"),
+    ("print_y_m", "-1.0"),
+    ("object_half_depth_m", "0.015"),
     # Camera-vs-lidar wall cross-check (front_wall field of the MAIN
     # Gemini plan — same image, no extra call): logs delta(cam-lidar) of
     # the wall's x; autocal subtracts the delta from the cube's

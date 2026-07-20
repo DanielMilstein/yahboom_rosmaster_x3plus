@@ -283,6 +283,20 @@ class GeminiPickPlaceExecutor(Node):
         self.declare_parameter("wall_to_target_x_m", -1.0)
         self.declare_parameter("wall_ref_tol_m", 0.06)
         self.declare_parameter("wall_ref_override", False)
+        # Slicer-referenced x (the autonomous wall-reference mode): the
+        # object's forward position decomposes into
+        #   wall_x (lidar, measured live every perception)
+        #   + bed_offset_x_m (wall face -> bed FRONT edge: fixed arena
+        #     furniture, taped once, never changes per print)
+        #   + print_y_m (bed front edge -> object CENTER along the
+        #     printer's y — read straight from the slicer per print job)
+        #   - object_half_depth_m (center -> near face, which is what the
+        #     grasp pipeline targets; engagement advances past it).
+        # Setting print_y_m >= 0 activates the mode and overrides the
+        # vision x. Robot x = printer y (depth); y stays vision.
+        self.declare_parameter("bed_offset_x_m", 0.15)
+        self.declare_parameter("print_y_m", -1.0)
+        self.declare_parameter("object_half_depth_m", 0.015)
         # Camera-vs-lidar wall cross-check: the main Gemini plan's optional
         # front_wall field locates the wall in the SAME image as the cube;
         # plane-ranging its bbox edges gives a camera-derived wall x to
@@ -3329,10 +3343,25 @@ class GeminiPickPlaceExecutor(Node):
         wall_x, n_fit = fit
         gap = float(target_point.point.x) - wall_x
         taped = float(self.get_parameter("wall_to_target_x_m").value)
+        print_y = float(self.get_parameter("print_y_m").value)
+        slicer_mode = print_y >= 0.0
+        if slicer_mode:
+            # Slicer-referenced gap: wall->bed-front (fixed furniture) +
+            # the object's bed-y from the slicer (exact, per job) - half
+            # depth to land on the near face. Every term is measured live
+            # or known by the toolchain — nothing to re-tape per print.
+            taped = (
+                float(self.get_parameter("bed_offset_x_m").value)
+                + print_y
+                - float(self.get_parameter("object_half_depth_m").value)
+            )
         self.get_logger().info(
             f"wall reference: wall_x={wall_x:.3f} ({n_fit} pts), "
             f"measured target-wall gap={gap:+.3f}"
-            + (f", taped gap={taped:+.3f}" if taped >= 0.0 else "")
+            + (
+                f", {'slicer' if slicer_mode else 'taped'} gap={taped:+.3f}"
+                if taped >= 0.0 else ""
+            )
         )
         if taped < 0.0:
             return
@@ -3344,10 +3373,10 @@ class GeminiPickPlaceExecutor(Node):
                 f"{gap - taped:+.3f} m off the lidar-referenced "
                 f"x={x_ref:.3f} (tol {tol:.3f})"
             )
-        if bool(self.get_parameter("wall_ref_override").value):
+        if slicer_mode or bool(self.get_parameter("wall_ref_override").value):
             self.get_logger().info(
-                f"wall reference override: x {target_point.point.x:.3f} -> "
-                f"{x_ref:.3f}"
+                f"wall reference override ({'slicer' if slicer_mode else 'taped'}): "
+                f"x {target_point.point.x:.3f} -> {x_ref:.3f}"
             )
             target_point.point.x = x_ref
 
