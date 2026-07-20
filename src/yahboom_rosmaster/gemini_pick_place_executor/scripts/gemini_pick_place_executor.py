@@ -270,6 +270,22 @@ class GeminiPickPlaceExecutor(Node):
         self.declare_parameter("wall_to_target_x_m", -1.0)
         self.declare_parameter("wall_ref_tol_m", 0.06)
         self.declare_parameter("wall_ref_override", False)
+        # Camera-vs-lidar wall cross-check: a second Gemini call locates the
+        # front wall in the image; plane-ranging its bbox edges gives a
+        # camera-derived wall x to compare with the lidar fit. The delta
+        # (camera - lidar) measures the camera's residual x error online
+        # against a large high-contrast landmark, through the same ray
+        # geometry the cube uses — so with wall_camera_autocal it is
+        # SUBTRACTED from the cube's plane-ranged x, cancelling shared
+        # systematics (residual pitch, extrinsic offset) with no taped
+        # constant. Costs one extra Gemini call (~5 s) per perception.
+        self.declare_parameter("wall_camera_check", False)
+        self.declare_parameter("wall_camera_autocal", False)
+        self.declare_parameter(
+            "wall_camera_task",
+            "the low wooden wall or barrier closest to the robot, directly "
+            "in front of it",
+        )
         # Lidar scan-match drive audit. Before/after each base drive the
         # full scan (front + sides — no flat-landmark assumption; the thing
         # ahead is a 3D printer) is ICP-matched to measure the TRUE planar
@@ -952,6 +968,19 @@ class GeminiPickPlaceExecutor(Node):
             refined = self._plane_range_target(plan, image, target_point)
             if refined is not None:
                 target_point = refined
+        cam_wall_delta = self._camera_wall_delta(image)
+        if cam_wall_delta is not None and bool(
+            self.get_parameter("wall_camera_autocal").value
+        ):
+            # The wall delta is the camera's measured x error through the
+            # same ray geometry the cube used — subtracting it cancels the
+            # shared systematics (residual pitch, extrinsic offset).
+            self.get_logger().info(
+                f"wall autocal: target x {target_point.point.x:.3f} -> "
+                f"{target_point.point.x - cam_wall_delta:.3f} "
+                f"(delta {cam_wall_delta:+.3f})"
+            )
+            target_point.point.x = float(target_point.point.x) - cam_wall_delta
         self._wall_reference_check(target_point)
         destination_point = self.project_pixel(
             "destination", destination_pixel, image.header.frame_id
@@ -3070,6 +3099,83 @@ class GeminiPickPlaceExecutor(Node):
         refined.point.x = float(bottom_pt.point.x)
         refined.point.y = float(bottom_pt.point.y)
         return refined
+
+    def _camera_wall_delta(self, image):
+        """Locate the front wall with a second Gemini call and plane-range
+        its bbox edges; return (camera_wall_x - lidar_wall_x) or None. The
+        wall is a large, high-contrast, depth-independent landmark whose
+        true x the lidar knows to ~1 cm — the delta is therefore a direct
+        online measurement of the camera's residual x error through the
+        same ray geometry the cube's plane ranging uses. Prefers the bbox
+        BOTTOM edge (the wall's robot-facing base — the same face the
+        lidar hits) over the TOP edge (biased ~wall-thickness far)."""
+        if not bool(self.get_parameter("wall_camera_check").value):
+            return None
+        fit = self._fit_front_wall_x()
+        if fit is None:
+            return None
+        wall_x_lidar, n_fit = fit
+        task = str(self.get_parameter("wall_camera_task").value)
+        result = self.call_gemini(task, image)
+        if result is None or not result["response"].accepted:
+            self.get_logger().warn(
+                "camera wall check: Gemini did not locate the wall"
+            )
+            return None
+        try:
+            plan = json.loads(result["response"].result_json)
+            box = plan["target_object"]["box"]
+            ymin, xmin, ymax, xmax = [float(v) for v in box]
+        except Exception as exc:  # noqa: BLE001
+            self.get_logger().warn(f"camera wall check: bad wall bbox ({exc})")
+            return None
+        x_mid = 0.5 * (xmin + xmax)
+        wall_z0 = float(self.get_parameter("lidar_wall_base_z_m").value)
+        wall_h = float(self.get_parameter("lidar_wall_height_m").value)
+        # Bottom edge: near-face base at the drive surface. The plane-mode
+        # switch treats z <= 0 as depth mode, so range at a hair above it.
+        bottom_pixel = normalized_point_to_pixel(
+            [ymax, x_mid], image.width, image.height
+        )
+        bottom_pt = self.project_pixel(
+            "wall_cam_bottom", bottom_pixel, image.header.frame_id,
+            plane_z=max(0.01, wall_z0 + 0.01),
+        )
+        top_pixel = normalized_point_to_pixel(
+            [ymin, x_mid], image.width, image.height
+        )
+        top_pt = self.project_pixel(
+            "wall_cam_top", top_pixel, image.header.frame_id,
+            plane_z=wall_z0 + wall_h,
+        )
+        cam_x = None
+        source = None
+        if bottom_pt is not None:
+            cam_x, source = float(bottom_pt.point.x), "bottom"
+        elif top_pt is not None:
+            cam_x, source = float(top_pt.point.x), "top"
+        if cam_x is None:
+            self.get_logger().warn(
+                "camera wall check: neither wall edge plane-ranged"
+            )
+            return None
+        delta = cam_x - wall_x_lidar
+        bottom_txt = (
+            f"{bottom_pt.point.x:.3f}" if bottom_pt is not None else "n/a"
+        )
+        top_txt = f"{top_pt.point.x:.3f}" if top_pt is not None else "n/a"
+        self.get_logger().info(
+            f"camera wall check: lidar wall_x={wall_x_lidar:.3f} "
+            f"({n_fit} pts) | camera bottom={bottom_txt} top={top_txt} | "
+            f"delta(cam-lidar)={delta:+.3f} (source={source})"
+        )
+        if abs(delta) > 0.10:
+            self.get_logger().warn(
+                f"camera wall check: delta {delta:+.3f} m implausibly "
+                "large; not using it"
+            )
+            return None
+        return delta
 
     def _wall_reference_check(self, target_point):
         """Cross-check (and optionally override) the vision x against the
