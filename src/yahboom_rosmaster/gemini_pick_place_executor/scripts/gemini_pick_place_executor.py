@@ -260,6 +260,9 @@ class GeminiPickPlaceExecutor(Node):
         # x by a scene-dependent amount — no constant offset can fix that.
         # z stays on the (calibrated, accurate) depth path.
         self.declare_parameter("plane_ranging", False)
+        # Half-height of the graspable object, used for the mid-height
+        # plane the bbox-center ray is intersected with (30 mm cube -> 15).
+        self.declare_parameter("plane_object_half_height_m", 0.015)
         # Lidar front-wall x reference: the gap (x_target - x_wall) is
         # invariant to robot pose, so it is logged on every perception for
         # calibration. Set wall_to_target_x_m to the taped wall-face ->
@@ -1621,12 +1624,15 @@ class GeminiPickPlaceExecutor(Node):
                     return state
         return None
 
-    def plan_and_execute_pose(self, pose_stamped, label):
+    def plan_and_execute_pose(self, pose_stamped, label, min_z=None):
         """Execute a fingertip pose, then close the loop on servo droop: the
         joint readback + FK report where the fingertip actually ended up; if
         it's off by more than pose_correction_tol_m, re-target once with the
         measured error subtracted (biasing the command high/forward so the
-        sagged pose lands on the true target)."""
+        sagged pose lands on the true target). min_z clamps the CORRECTED
+        commands too — without it a positive FK z-error (fingers pressing
+        on a surface read as 'too high') re-targets ever deeper below the
+        safety floor and grinds the fingertips into the surface."""
         ok = self._plan_and_execute_pose_once(pose_stamped, label)
         if not ok:
             return False
@@ -1647,6 +1653,13 @@ class GeminiPickPlaceExecutor(Node):
             corrected.pose.position.x = tx - ex
             corrected.pose.position.y = ty - ey
             corrected.pose.position.z = tz - ez
+            if min_z is not None and corrected.pose.position.z < float(min_z):
+                self.get_logger().info(
+                    f"[{label}] droop correction z "
+                    f"{corrected.pose.position.z:.3f} clamped to floor "
+                    f"{float(min_z):.3f}"
+                )
+                corrected.pose.position.z = float(min_z)
             self.get_logger().info(
                 f"[{label}] droop correction #{i + 1}: fingertip error "
                 f"({ex:+.3f},{ey:+.3f},{ez:+.3f}) |{err:.3f}|m > {tol:.3f}m; "
@@ -3059,40 +3072,46 @@ class GeminiPickPlaceExecutor(Node):
         center_pixel = normalized_point_to_pixel(
             [0.5 * (ymin + ymax), x_mid], image.width, image.height
         )
+        # PRIMARY = bbox CENTER at the object's mid-height plane: the
+        # center pixel is a robust interior point, whereas the bbox bottom
+        # edge rides the object/shadow boundary and bias-tapes low (= x
+        # short, ~1-2 cm measured on hardware). Bottom stays as the
+        # cross-check.
+        half_h = float(self.get_parameter("plane_object_half_height_m").value)
+        center_pt = self.project_pixel(
+            "plane_center", center_pixel, image.header.frame_id,
+            plane_z=table_z + half_h,
+        )
         bottom_pt = self.project_pixel(
             "plane_bottom", bottom_pixel, image.header.frame_id,
             plane_z=table_z,
         )
-        if bottom_pt is None:
+        primary = center_pt if center_pt is not None else bottom_pt
+        if primary is None:
             self.get_logger().warn(
-                "plane ranging: bottom-pixel plane projection failed; "
-                "keeping depth x/y"
+                "plane ranging: plane projections failed; keeping depth x/y"
             )
             return None
-        # Cross-check variant: the bbox CENTER sits at ~cube mid-height;
-        # the two estimates should agree to ~1 cm when the pitch and plane
-        # height are right.
-        center_pt = self.project_pixel(
-            "plane_center", center_pixel, image.header.frame_id,
-            plane_z=table_z + 0.015,
+        bottom_txt = (
+            f"{bottom_pt.point.x:.3f}" if bottom_pt is not None else "n/a"
         )
         center_txt = (
             f"{center_pt.point.x:.3f}" if center_pt is not None else "n/a"
         )
         self.get_logger().info(
-            f"plane ranging: x_plane_bottom={bottom_pt.point.x:.3f} "
-            f"x_plane_center={center_txt} x_depth={depth_point.point.x:.3f} "
-            f"(y plane-depth delta {bottom_pt.point.y - depth_point.point.y:+.3f})"
+            f"plane ranging: x_plane_center={center_txt} "
+            f"x_plane_bottom={bottom_txt} x_depth={depth_point.point.x:.3f} "
+            f"(y plane-depth delta {primary.point.y - depth_point.point.y:+.3f})"
         )
-        if abs(bottom_pt.point.x - depth_point.point.x) > 0.05:
+        if abs(primary.point.x - depth_point.point.x) > 0.05:
             self.get_logger().warn(
                 f"plane vs depth x disagree by "
-                f"{bottom_pt.point.x - depth_point.point.x:+.3f} m — depth "
+                f"{primary.point.x - depth_point.point.x:+.3f} m — depth "
                 "likely sampled a different surface; trusting the plane"
             )
         refined = deepcopy(depth_point)
-        refined.point.x = float(bottom_pt.point.x)
-        refined.point.y = float(bottom_pt.point.y)
+        refined.point.x = float(primary.point.x)
+        refined.point.y = float(primary.point.y)
         return refined
 
     def _camera_wall_delta(self, image, plan):
@@ -3154,6 +3173,22 @@ class GeminiPickPlaceExecutor(Node):
         if cam_x is None:
             self.get_logger().warn(
                 "camera wall check: neither wall edge plane-ranged"
+            )
+            return None
+        if (
+            bottom_pt is not None
+            and top_pt is not None
+            and abs(bottom_pt.point.x - top_pt.point.x) > 0.03
+        ):
+            # A sound wall bbox yields agreeing bottom/top estimates; a
+            # spread beyond 3 cm means the bbox edges are riding
+            # shadow/occlusion boundaries (hardware showed 2.4-5 cm spreads
+            # with a bottom edge biased LONG, opposite the cube's error) —
+            # such a delta must not be used for autocal.
+            self.get_logger().warn(
+                f"camera wall check: bottom/top estimates disagree "
+                f"({bottom_pt.point.x:.3f} vs {top_pt.point.x:.3f}) — wall "
+                "bbox unreliable; delta not used"
             )
             return None
         delta = cam_x - wall_x_lidar
@@ -3405,7 +3440,9 @@ class GeminiPickPlaceExecutor(Node):
                  self.top_down_pose(pick_target, pick_lift), "03_pre_pick")),
             ("04_pick",
              lambda: self.plan_and_execute_pose(
-                 self.top_down_pose(pick_target, grasp_descent), "04_pick")),
+                 self.top_down_pose(pick_target, grasp_descent), "04_pick",
+                 min_z=float(table_z)
+                 + float(self.get_parameter("pick_z_safety_m").value))),
             ("05_close_gripper",
              lambda: self._close_gripper_until_contact(
                  "05_close_gripper", expected_grip=grip_value)),
