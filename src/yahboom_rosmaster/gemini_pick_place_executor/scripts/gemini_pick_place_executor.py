@@ -294,7 +294,7 @@ class GeminiPickPlaceExecutor(Node):
         #     grasp pipeline targets; engagement advances past it).
         # Setting print_y_m >= 0 activates the mode and overrides the
         # vision x. Robot x = printer y (depth); y stays vision.
-        self.declare_parameter("bed_offset_x_m", 0.15)
+        self.declare_parameter("bed_offset_x_m", 0.32)
         self.declare_parameter("print_y_m", -1.0)
         self.declare_parameter("object_half_depth_m", 0.015)
         # Camera-vs-lidar wall cross-check: the main Gemini plan's optional
