@@ -263,6 +263,16 @@ class GeminiPickPlaceExecutor(Node):
         # Half-height of the graspable object, used for the mid-height
         # plane the bbox-center ray is intersected with (30 mm cube -> 15).
         self.declare_parameter("plane_object_half_height_m", 0.015)
+        # Refine Gemini's bbox to exact pixels by segmenting the bright
+        # object inside it (white cube on a dark bed). Gemini supplies
+        # SEMANTICS (which object, roughly where); the segmentation
+        # supplies PIXELS. Measured on hardware: the Gemini bbox rides
+        # ~5-15 px low/loose, and at our grazing view the plane
+        # intersection amplifies every pixel into 4-7 mm of x — the
+        # residual 4-6 cm miss. A brightness blob centroid is ~1 px and
+        # deterministic. Falls back to the raw bbox when segmentation
+        # fails (dark objects, sim scenes).
+        self.declare_parameter("pixel_refine", True)
         # Lidar front-wall x reference: the gap (x_target - x_wall) is
         # invariant to robot pose, so it is logged on every perception for
         # calibration. Set wall_to_target_x_m to the taped wall-face ->
@@ -3049,6 +3059,59 @@ class GeminiPickPlaceExecutor(Node):
             return None
         return float(np.median(near[:, 0])), len(near)
 
+    def _refine_target_pixels(self, image, box):
+        """Segment the bright object inside Gemini's (normalized) bbox and
+        return exact (center_pixel, bottom_pixel) in image coordinates, or
+        None when segmentation is unconvincing. Pure numpy on the raw RGB
+        buffer — brightness of a white object is channel-order agnostic,
+        so rgb8/bgr8 both work. The bbox is expanded ~15% so a tight box
+        cannot clip the object's true extent."""
+        import numpy as np
+
+        try:
+            if image.encoding.lower() not in ("rgb8", "bgr8"):
+                return None
+            img = np.frombuffer(image.data, dtype=np.uint8)
+            img = img.reshape(image.height, image.width, 3)
+        except Exception:  # noqa: BLE001
+            return None
+        ymin, xmin, ymax, xmax = [float(v) for v in box]
+        pad_y = 0.15 * (ymax - ymin)
+        pad_x = 0.15 * (xmax - xmin)
+        v0 = max(0, int((ymin - pad_y) * image.height))
+        v1 = min(image.height, int((ymax + pad_y) * image.height) + 1)
+        u0 = max(0, int((xmin - pad_x) * image.width))
+        u1 = min(image.width, int((xmax + pad_x) * image.width) + 1)
+        if v1 - v0 < 6 or u1 - u0 < 6:
+            return None
+        crop = img[v0:v1, u0:u1].astype(np.float32)
+        brightness = crop.mean(axis=2)
+        # Bright-object threshold between the crop's dark background and
+        # bright peak; require genuine contrast or bail out.
+        p95 = float(np.percentile(brightness, 95))
+        p50 = float(np.percentile(brightness, 50))
+        if p95 - p50 < 40.0:
+            return None
+        mask = brightness > 0.5 * (p95 + p50)
+        n = int(mask.sum())
+        if n < 40 or n > 0.9 * mask.size:
+            return None
+        vs, us = np.nonzero(mask)
+        u_c = u0 + float(us.mean())
+        v_c = v0 + float(vs.mean())
+        # Bottom edge: the lowest rows that still hold a meaningful run of
+        # object pixels (a stray bright speck cannot drag it down).
+        row_counts = mask.sum(axis=1)
+        min_run = max(3, int(0.3 * float(row_counts.max())))
+        good_rows = np.nonzero(row_counts >= min_run)[0]
+        v_b = v0 + float(good_rows.max())
+        bottom_row_us = us[vs == good_rows.max()]
+        u_b = u0 + float(np.median(bottom_row_us))
+        return (
+            (int(round(u_c)), int(round(v_c))),
+            (int(round(u_b)), int(round(v_b))),
+        )
+
     def _plane_range_target(self, plan, image, depth_point):
         """Ground-plane ranging for the target's x/y: intersect the bbox
         bottom-center pixel ray with the tape-measured platform plane
@@ -3072,6 +3135,21 @@ class GeminiPickPlaceExecutor(Node):
         center_pixel = normalized_point_to_pixel(
             [0.5 * (ymin + ymax), x_mid], image.width, image.height
         )
+        if bool(self.get_parameter("pixel_refine").value):
+            refined_px = self._refine_target_pixels(image, box)
+            if refined_px is not None:
+                r_center, r_bottom = refined_px
+                self.get_logger().info(
+                    f"pixel refine: center {center_pixel} -> {r_center}, "
+                    f"bottom {bottom_pixel} -> {r_bottom} "
+                    f"(shift {r_center[1] - center_pixel[1]:+d}px vertical)"
+                )
+                center_pixel, bottom_pixel = r_center, r_bottom
+            else:
+                self.get_logger().info(
+                    "pixel refine: segmentation unconvincing; using raw "
+                    "Gemini bbox pixels"
+                )
         # PRIMARY = bbox CENTER at the object's mid-height plane: the
         # center pixel is a robust interior point, whereas the bbox bottom
         # edge rides the object/shadow boundary and bias-tapes low (= x

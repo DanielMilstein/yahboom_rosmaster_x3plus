@@ -37,6 +37,7 @@ FORWARDED_PARAMS = [
     # should pass true (with table_z_source:=param and a taped table_z_m).
     ("plane_ranging", "false"),
     ("plane_object_half_height_m", "0.015"),
+    ("pixel_refine", "true"),
     # Lidar front-wall x reference: gap logged every perception; set the
     # taped wall-face -> cube-near-face distance to gate the vision x,
     # wall_ref_override:=true to substitute it (fixed demo placements).
