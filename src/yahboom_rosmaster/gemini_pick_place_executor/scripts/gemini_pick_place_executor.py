@@ -270,22 +270,17 @@ class GeminiPickPlaceExecutor(Node):
         self.declare_parameter("wall_to_target_x_m", -1.0)
         self.declare_parameter("wall_ref_tol_m", 0.06)
         self.declare_parameter("wall_ref_override", False)
-        # Camera-vs-lidar wall cross-check: a second Gemini call locates the
-        # front wall in the image; plane-ranging its bbox edges gives a
-        # camera-derived wall x to compare with the lidar fit. The delta
-        # (camera - lidar) measures the camera's residual x error online
-        # against a large high-contrast landmark, through the same ray
-        # geometry the cube uses — so with wall_camera_autocal it is
-        # SUBTRACTED from the cube's plane-ranged x, cancelling shared
-        # systematics (residual pitch, extrinsic offset) with no taped
-        # constant. Costs one extra Gemini call (~5 s) per perception.
+        # Camera-vs-lidar wall cross-check: the main Gemini plan's optional
+        # front_wall field locates the wall in the SAME image as the cube;
+        # plane-ranging its bbox edges gives a camera-derived wall x to
+        # compare with the lidar fit. The delta (camera - lidar) measures
+        # the camera's residual x error online against a large
+        # high-contrast landmark, through the same ray geometry the cube
+        # uses — so with wall_camera_autocal it is SUBTRACTED from the
+        # cube's plane-ranged x, cancelling shared systematics (residual
+        # pitch, extrinsic offset) with no taped constant.
         self.declare_parameter("wall_camera_check", False)
         self.declare_parameter("wall_camera_autocal", False)
-        self.declare_parameter(
-            "wall_camera_task",
-            "the low wooden wall or barrier closest to the robot, directly "
-            "in front of it",
-        )
         # Lidar scan-match drive audit. Before/after each base drive the
         # full scan (front + sides — no flat-landmark assumption; the thing
         # ahead is a 3D printer) is ICP-matched to measure the TRUE planar
@@ -968,7 +963,7 @@ class GeminiPickPlaceExecutor(Node):
             refined = self._plane_range_target(plan, image, target_point)
             if refined is not None:
                 target_point = refined
-        cam_wall_delta = self._camera_wall_delta(image)
+        cam_wall_delta = self._camera_wall_delta(image, plan)
         if cam_wall_delta is not None and bool(
             self.get_parameter("wall_camera_autocal").value
         ):
@@ -3100,31 +3095,33 @@ class GeminiPickPlaceExecutor(Node):
         refined.point.y = float(bottom_pt.point.y)
         return refined
 
-    def _camera_wall_delta(self, image):
-        """Locate the front wall with a second Gemini call and plane-range
-        its bbox edges; return (camera_wall_x - lidar_wall_x) or None. The
-        wall is a large, high-contrast, depth-independent landmark whose
-        true x the lidar knows to ~1 cm — the delta is therefore a direct
-        online measurement of the camera's residual x error through the
-        same ray geometry the cube's plane ranging uses. Prefers the bbox
-        BOTTOM edge (the wall's robot-facing base — the same face the
-        lidar hits) over the TOP edge (biased ~wall-thickness far)."""
+    def _camera_wall_delta(self, image, plan):
+        """Plane-range the front wall reported in the MAIN Gemini plan's
+        optional front_wall field and compare with the lidar's wall fit;
+        return (camera_wall_x - lidar_wall_x) or None. The wall is a large,
+        high-contrast, depth-independent landmark whose true x the lidar
+        knows to ~1 cm — the delta is therefore a direct online measurement
+        of the camera's residual x error through the same ray geometry the
+        cube's plane ranging uses, from the SAME image as the cube
+        detection. Prefers the bbox BOTTOM edge (the wall's robot-facing
+        base — the same face the lidar hits) over the TOP edge (biased
+        ~wall-thickness far). Asking for the wall as a separate pick task
+        instead trips the bridge's unsafe gate ('fixed barrier cannot be
+        picked'), hence the dedicated schema field."""
         if not bool(self.get_parameter("wall_camera_check").value):
+            return None
+        wall = plan.get("front_wall") or {}
+        box = wall.get("box")
+        if not wall.get("visible") or not box or len(box) != 4:
+            self.get_logger().info(
+                "camera wall check: no front_wall in Gemini plan"
+            )
             return None
         fit = self._fit_front_wall_x()
         if fit is None:
             return None
         wall_x_lidar, n_fit = fit
-        task = str(self.get_parameter("wall_camera_task").value)
-        result = self.call_gemini(task, image)
-        if result is None or not result["response"].accepted:
-            self.get_logger().warn(
-                "camera wall check: Gemini did not locate the wall"
-            )
-            return None
         try:
-            plan = json.loads(result["response"].result_json)
-            box = plan["target_object"]["box"]
             ymin, xmin, ymax, xmax = [float(v) for v in box]
         except Exception as exc:  # noqa: BLE001
             self.get_logger().warn(f"camera wall check: bad wall bbox ({exc})")

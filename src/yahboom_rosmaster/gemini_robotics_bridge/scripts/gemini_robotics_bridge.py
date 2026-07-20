@@ -128,6 +128,28 @@ PICK_PLACE_SCHEMA = {
             "items": {"type": "string", "maxLength": 120},
             "maxItems": 8,
         },
+        # OPTIONAL: a low wall/barrier between the robot and the target,
+        # reported alongside the pick plan. The executor cross-references
+        # its image position against the lidar's wall fit to measure (and
+        # cancel) the camera's residual forward-ranging error. Optional so
+        # scenes without a wall (sim) stay schema-valid. Asking for the
+        # wall as the pick TARGET instead trips the unsafe gate ("fixed
+        # barrier cannot be picked") — hence a dedicated field.
+        "front_wall": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["visible"],
+            "properties": {
+                "visible": {"type": "boolean"},
+                "box": {
+                    "type": "array",
+                    "items": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+                    "minItems": 4,
+                    "maxItems": 4,
+                },
+                "confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+            },
+        },
     },
 }
 

@@ -42,14 +42,12 @@ FORWARDED_PARAMS = [
     ("wall_to_target_x_m", "-1.0"),
     ("wall_ref_tol_m", "0.06"),
     ("wall_ref_override", "false"),
-    # Camera-vs-lidar wall cross-check (+1 Gemini call per perception):
-    # logs delta(cam-lidar) of the front wall's x; autocal subtracts the
-    # delta from the cube's plane-ranged x (cancels shared systematics).
+    # Camera-vs-lidar wall cross-check (front_wall field of the MAIN
+    # Gemini plan — same image, no extra call): logs delta(cam-lidar) of
+    # the wall's x; autocal subtracts the delta from the cube's
+    # plane-ranged x (cancels shared systematics).
     ("wall_camera_check", "false"),
     ("wall_camera_autocal", "false"),
-    ("wall_camera_task",
-     "the low wooden wall or barrier closest to the robot, directly in "
-     "front of it"),
     ("scan_topic", "/scan"),
     ("lidar_audit", "true"),
     ("lidar_min_range_m", "0.25"),
