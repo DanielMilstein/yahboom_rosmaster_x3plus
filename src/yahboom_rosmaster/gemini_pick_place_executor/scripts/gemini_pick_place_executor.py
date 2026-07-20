@@ -3345,6 +3345,16 @@ class GeminiPickPlaceExecutor(Node):
         taped = float(self.get_parameter("wall_to_target_x_m").value)
         print_y = float(self.get_parameter("print_y_m").value)
         slicer_mode = print_y >= 0.0
+        if slicer_mode and print_y > 0.45:
+            # No printer bed is half a meter deep (Prusa XL: 0.36 m). A
+            # value like 2.5 is almost certainly the slicer's MILLIMETERS
+            # pasted raw — print_y_m takes METERS (slicer mm / 1000).
+            self.get_logger().error(
+                f"print_y_m={print_y:.3f} exceeds any plausible bed depth "
+                "— the unit is METERS (slicer mm / 1000); ignoring the "
+                "slicer reference this run"
+            )
+            slicer_mode = False
         if slicer_mode:
             # Slicer-referenced gap: wall->bed-front (fixed furniture) +
             # the object's bed-y from the slicer (exact, per job) - half
@@ -3373,6 +3383,16 @@ class GeminiPickPlaceExecutor(Node):
                 f"{gap - taped:+.3f} m off the lidar-referenced "
                 f"x={x_ref:.3f} (tol {tol:.3f})"
             )
+        if abs(x_ref - float(target_point.point.x)) > 0.30:
+            # Vision has never been more than ~10 cm wrong; a reference
+            # 30+ cm away means a bad constant (units, wrong bed offset,
+            # bogus wall fit) — refusing beats driving off after it.
+            self.get_logger().error(
+                f"wall reference x={x_ref:.3f} is implausibly far from the "
+                f"vision x={target_point.point.x:.3f}; NOT overriding — "
+                "check print_y_m (meters!) and bed_offset_x_m"
+            )
+            return
         if slicer_mode or bool(self.get_parameter("wall_ref_override").value):
             self.get_logger().info(
                 f"wall reference override ({'slicer' if slicer_mode else 'taped'}): "
