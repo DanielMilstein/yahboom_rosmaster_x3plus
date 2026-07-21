@@ -54,6 +54,7 @@ FORWARDED_PARAMS = [
     ("bed_offset_x_m", "0.32"),
     ("print_y_m", "-1.0"),
     ("object_half_depth_m", "0.015"),
+    ("joint_limit_margin_rad", "0.15"),
     # Camera-vs-lidar wall cross-check (front_wall field of the MAIN
     # Gemini plan — same image, no extra call): logs delta(cam-lidar) of
     # the wall's x; autocal subtracts the delta from the cube's

@@ -297,6 +297,11 @@ class GeminiPickPlaceExecutor(Node):
         self.declare_parameter("bed_offset_x_m", 0.32)
         self.declare_parameter("print_y_m", -1.0)
         self.declare_parameter("object_half_depth_m", 0.015)
+        # Reject IK solutions with positioning joints (1-4) within this
+        # margin of the +-1.5708 servo range ends — proprioception lies
+        # there (folded-elbow picks missed 4-12cm short with clean
+        # readback; stretched-branch poses were validated to ~3mm).
+        self.declare_parameter("joint_limit_margin_rad", 0.15)
         # Camera-vs-lidar wall cross-check: the main Gemini plan's optional
         # front_wall field locates the wall in the SAME image as the cube;
         # plane-ranging its bbox edges gives a camera-derived wall x to
@@ -1644,9 +1649,39 @@ class GeminiPickPlaceExecutor(Node):
                 pass
             state.update()
             if state.set_from_ik(arm_name, pose, ee_link, timeout):
+                if self._near_joint_limits(state, arm_name):
+                    continue
                 if not check_collision or self.state_is_collision_free(state):
                     return state
         return None
+
+    def _near_joint_limits(self, state, arm_name):
+        """Reject IK solutions whose POSITIONING joints (1-4) sit near the
+        +-1.5708 servo range ends. Hard-won hardware lesson: the servos'
+        proprioception lies at their extremes — every deep-elbow-fold pick
+        (j3 <= -1.4) missed the cube 4-12 cm short while readback swore
+        the joints were on target, and every accurate pose used the
+        stretched branch (j3 -0.6..-1.3, the branch the servo map was
+        validated on to ~3 mm). The wrist (j5) is exempt: it is a roll
+        with no effect on fingertip position, and the roll twins
+        legitimately live at the limits."""
+        margin = float(self.get_parameter("joint_limit_margin_rad").value)
+        if margin <= 0.0:
+            return False
+        try:
+            q = [float(v) for v in state.get_joint_group_positions(arm_name)]
+        except Exception:  # noqa: BLE001
+            return False
+        for i, val in enumerate(q[:4]):
+            if abs(val) > (1.5708 - margin):
+                self.get_logger().info(
+                    f"IK solution rejected: arm_joint{i + 1}={val:+.3f} is "
+                    f"within {margin:.2f} rad of its limit (servo accuracy "
+                    "dies there)",
+                    throttle_duration_sec=5.0,
+                )
+                return True
+        return False
 
     def plan_and_execute_pose(self, pose_stamped, label, min_z=None):
         """Execute a fingertip pose, then close the loop on servo droop: the
