@@ -75,6 +75,11 @@ FORWARDED_PARAMS = [
     ("drive_max_ang_speed_rps", "0.3"),
     ("drive_yaw_tol_rad", "0.01"),
     ("grasp_empty_tol_rad", "0.15"),
+    # Empty also requires jaws near fully shut (abs test): air-grabs end at
+    # -0.077..-0.103, real object stops below -0.3. Guards the gate against
+    # the noisy bbox-width-derived expected stop (scatter 0.022-0.068 m for
+    # a 30 mm cube once discarded a successful grasp).
+    ("grasp_empty_min_close_rad", "-0.20"),
     ("empty_grasp_freeze_sec", "0.0"),
     ("start_collision_recovery", "true"),
     ("arm_action_topic", "/arm_controller/follow_joint_trajectory"),

@@ -377,6 +377,14 @@ class GeminiPickPlaceExecutor(Node):
         # immediately (no lift/verify). Catches the failure mode where the
         # visual verifier hallucinates success on an empty closed gripper.
         self.declare_parameter("grasp_empty_tol_rad", 0.15)
+        # ...but only if the jaws are also NEAR FULLY SHUT in absolute terms
+        # (grip_joint: -1.54 open -> 0.0 closed). The expected stop comes
+        # from the depth-projected bbox width, which scatters 0.022-0.068 m
+        # for the 30 mm cube; a garbage width once made the relative test
+        # discard a physically successful grasp (stop -0.488 vs expected
+        # -0.690). True air-grabs close to -0.077..-0.103; real object stops
+        # sit well below -0.3. Empty requires final >= this too.
+        self.declare_parameter("grasp_empty_min_close_rad", -0.20)
         # Publish the lidar-detected FRONT WALL (the arena barrier ahead of
         # the robot) as a MoveIt collision object before each pick attempt,
         # so IK/planning keep the arm off it. Wall pose comes straight from
@@ -3044,7 +3052,26 @@ class GeminiPickPlaceExecutor(Node):
         # visual verifier has hallucinated success on exactly this state.
         if expected_grip is not None and final_actual is not None:
             tol = float(self.get_parameter("grasp_empty_tol_rad").value)
-            if float(final_actual) >= float(expected_grip) + tol:
+            min_close = float(
+                self.get_parameter("grasp_empty_min_close_rad").value
+            )
+            past_expected = float(final_actual) >= float(expected_grip) + tol
+            if past_expected and float(final_actual) < min_close:
+                # The width-based expectation says "should have stopped
+                # sooner", but the jaws are NOT near fully shut — a real
+                # object is between them and the width measurement was
+                # noisy (observed: bbox-edge widths scatter 0.022-0.068 m
+                # for a 30 mm cube; one such reading made the gate drop a
+                # successfully grasped cube). Physical emptiness means
+                # nearly-closed jaws; require BOTH signals.
+                self.get_logger().warn(
+                    f"[{label}] jaws stopped at {final_actual:.3f} — past "
+                    f"the width-based expectation ({expected_grip:.3f} + "
+                    f"tol {tol:.2f}) but not near closed "
+                    f"({min_close:.2f}); treating as HELD (width "
+                    "measurement likely noisy)"
+                )
+            elif past_expected:
                 self.get_logger().error(
                     f"[{label}] EMPTY GRASP: jaws closed to "
                     f"{final_actual:.3f} rad, past the expected object stop "
