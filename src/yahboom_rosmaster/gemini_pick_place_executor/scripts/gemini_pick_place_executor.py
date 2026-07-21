@@ -195,7 +195,15 @@ class GeminiPickPlaceExecutor(Node):
         # orientation Q, the wrist IK target is computed as
         # `fingertip_target - R(Q) * gripper_tip_offset_xyz`, so the fingertip
         # lands on the perceived point regardless of orientation.
-        self.declare_parameter("gripper_tip_offset_xyz", [0.0, 0.0, 0.09])
+        # ZERO, not 0.09: the URDF's arm_link5 origin already sits AT the
+        # fingertips (arm_joint5 is 0.1746 out along link4 — wrist AND
+        # gripper body; the finger joints attach at z=-0.0685 in link5 and
+        # the ~6cm fingers reach back to z~0). The +-0.09 eras were both
+        # wrong by one gripper length: -0.09 overshot 9cm, +0.09 landed
+        # 9cm short along the approach — the campaign's irreducible x
+        # miss. Confirmed by three freeze-tape measurements (physical
+        # fingertip == model flange to mm, in x and z).
+        self.declare_parameter("gripper_tip_offset_xyz", [0.0, 0.0, 0.0])
         self.declare_parameter("use_orientation_constraint", True)
         self.declare_parameter("top_down_yaw", 0.0)
         self.declare_parameter("planning_time", 5.0)

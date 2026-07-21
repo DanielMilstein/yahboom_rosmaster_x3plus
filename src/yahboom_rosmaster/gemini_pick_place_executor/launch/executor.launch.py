@@ -119,7 +119,10 @@ FORWARDED_PARAMS = [
     # leaves headroom for system jitter.
     ("close_grip_timeout_s", "50.0"),
     ("carry_pose_named", "up"),
-    ("gripper_tip_offset_xyz", "[0.0, 0.0, 0.09]"),
+    # Zero: the URDF's arm_link5 origin is already at the fingertips (the
+    # finger joints attach at z=-0.0685 inside link5). +0.09 double-counted
+    # the gripper and landed every pick one gripper-length short.
+    ("gripper_tip_offset_xyz", "[0.0, 0.0, 0.0]"),
     ("end_effector_link", "arm_link5"),
     ("position_tolerance_m", "0.01"),
     ("orientation_xy_tol_rad", "0.3"),
