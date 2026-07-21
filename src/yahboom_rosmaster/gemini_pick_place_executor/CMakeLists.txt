@@ -7,6 +7,7 @@ install(
   PROGRAMS
     scripts/gemini_pick_place_executor.py
     scripts/lidar_debug.py
+    scripts/return_to_origin.py
   DESTINATION lib/${PROJECT_NAME})
 
 install(
