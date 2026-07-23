@@ -433,6 +433,14 @@ class GeminiPickPlaceExecutor(Node):
         # the camera before verification — see the "show" group_state in the
         # SRDF. Override if you want a different framing.
         self.declare_parameter("verify_show_pose_named", "show")
+        # Taught verify-show pose: 5 joint values (rad) captured with
+        # teach_pose.py. When set (exactly 5 entries) it takes precedence
+        # over verify_show_pose_named and is planned WITH collision
+        # checking — a taught pose that trips a model collision degrades
+        # to verify-from-current-view, never to an unsafe move. The
+        # 1-element default means "unset". verify_show_pose_named:=none
+        # skips the show move entirely.
+        self.declare_parameter("verify_show_joints_rad", [0.0])
         # Closed-loop gripper close. Step the commanded grip_joint position
         # toward closed in small increments, read back actual position from
         # /joint_states, and stop on stall (commanded keeps advancing, actual
@@ -526,6 +534,10 @@ class GeminiPickPlaceExecutor(Node):
 
         self.latest_image = None
         self.latest_base_point = None
+        # The verify-show pose is best-effort; once it fails to plan we
+        # remember and stop re-attempting (and re-spamming OMPL errors)
+        # every pick attempt of the run.
+        self._show_pose_unplannable = False
         self.base_point_event = threading.Event()
         self.worker_started = False
         self.worker_lock = threading.Lock()
@@ -1249,18 +1261,53 @@ class GeminiPickPlaceExecutor(Node):
             return None
         return future.result()
 
+    def plan_and_execute_arm_joints(self, values, label):
+        """Plan (with collision checking) and execute to an explicit arm
+        joint state — the taught-pose analogue of the named-state path."""
+        if self.arm_component is None or self.moveit is None:
+            return False
+        from moveit.core.robot_state import RobotState
+
+        arm_name = str(self.get_parameter("arm_group_name").value)
+        state = RobotState(self.moveit.get_robot_model())
+        state.set_joint_group_positions(arm_name, [float(v) for v in values])
+        self.arm_component.set_start_state_to_current_state()
+        self.arm_component.set_goal_state(robot_state=state)
+        return self.plan_and_execute(self.arm_component, arm_name, label)
+
     def _verify_show_step(self, verify_show_pose):
-        """Strike the 'show' pose before Gemini pick verification. Skipped
-        when verification is off; NON-FATAL when the pose can't be planned
-        (the SRDF 'show' state trips a base_link<->arm_link3 collision in
-        the model on hardware) — verification then just uses the current
-        (post-lift) view instead of aborting an already-lifted pick."""
+        """Strike the verify-show pose before Gemini pick verification.
+        Pose source priority: verify_show_joints_rad (taught with
+        teach_pose.py, planned with collision checking) > the named SRDF
+        pose > skipped entirely (verify_show_pose_named:=none). Always
+        NON-FATAL: an unplannable pose (the stock SRDF 'show' state trips
+        a base_link<->arm_link3 model collision on hardware) just means
+        verification uses the current (post-lift) view — and the failure
+        is remembered so later pick attempts don't re-spam the planner."""
         if not bool(self.get_parameter("verify_pick_with_gemini").value):
             return True
-        if not self.plan_and_execute_named_arm(verify_show_pose, "06b_verify_show"):
+        if self._show_pose_unplannable:
+            self.get_logger().info(
+                "06b_verify_show: show pose already found unplannable this "
+                "run; verifying from the current pose"
+            )
+            return True
+        taught = list(self.get_parameter("verify_show_joints_rad").value)
+        if len(taught) == 5:
+            ok = self.plan_and_execute_arm_joints(taught, "06b_verify_show")
+        elif str(verify_show_pose).strip().lower() in ("", "none", "off"):
+            return True
+        else:
+            ok = self.plan_and_execute_named_arm(
+                verify_show_pose, "06b_verify_show"
+            )
+        if not ok:
+            self._show_pose_unplannable = True
             self.get_logger().warn(
-                "06b_verify_show: 'show' pose unplannable; verifying from "
-                "the current pose instead"
+                "06b_verify_show: show pose unplannable; verifying from "
+                "the current pose instead (won't re-attempt this run — "
+                "teach a collision-free pose with teach_pose.py and pass "
+                "verify_show_joints_rad, or set verify_show_pose_named:=none)"
             )
         return True
 

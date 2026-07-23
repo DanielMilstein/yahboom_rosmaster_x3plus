@@ -115,6 +115,9 @@ FORWARDED_PARAMS = [
     ("verify_pick_with_gemini", "true"),
     ("verify_pick_required", "true"),
     ("verify_show_pose_named", "show"),
+    # Taught verify-show pose (teach_pose.py): 5 joint values override the
+    # named pose and plan with collision checking. "[0.0]" = unset.
+    ("verify_show_joints_rad", "[0.0]"),
     ("max_pick_attempts", "5"),
     ("close_grip_step_size_rad", "0.05"),
     ("close_grip_settle_time_s", "0.3"),

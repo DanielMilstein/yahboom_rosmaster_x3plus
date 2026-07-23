@@ -8,6 +8,7 @@ install(
     scripts/gemini_pick_place_executor.py
     scripts/lidar_debug.py
     scripts/return_to_origin.py
+    scripts/teach_pose.py
   DESTINATION lib/${PROJECT_NAME})
 
 install(
