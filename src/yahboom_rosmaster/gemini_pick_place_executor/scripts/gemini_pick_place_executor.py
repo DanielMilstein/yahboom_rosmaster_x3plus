@@ -311,6 +311,24 @@ class GeminiPickPlaceExecutor(Node):
         self.declare_parameter("bed_offset_x_m", 0.155)
         self.declare_parameter("print_y_m", -1.0)
         self.declare_parameter("object_half_depth_m", 0.015)
+        # Printer-bed collision slab: a box in the planning scene whose
+        # front face sits at wall_x + bed_offset_x_m (the same live-lidar
+        # chain slicer mode uses) and whose top is the resolved table_z.
+        # Purpose: IK/planning reject poses that put the gripper's servo
+        # bulk or the claws below the bed surface — which both crashed
+        # picks physically AND false-triggered the close-until-contact
+        # loop when a claw dragged the bed. With the box in the scene the
+        # roll-twin orientation candidates let planning auto-pick the
+        # gripper roll that keeps the servo above the bed.
+        self.declare_parameter("bed_collision", False)
+        self.declare_parameter("bed_collision_halfwidth_m", 0.30)
+        self.declare_parameter("bed_collision_depth_m", 0.40)
+        self.declare_parameter("bed_collision_thickness_m", 0.03)
+        # Top of the slab sits this far BELOW table_z: collision meshes
+        # carry a few mm of slop, and the validated grasp works with the
+        # claws close to the bed — without clearance the box would veto
+        # the exact pose that succeeds.
+        self.declare_parameter("bed_collision_clearance_m", 0.005)
         # Reject IK solutions with positioning joints (1-4) within this
         # margin of the +-1.5708 servo range ends — proprioception lies
         # there (folded-elbow picks missed 4-12cm short with clean
@@ -925,7 +943,7 @@ class GeminiPickPlaceExecutor(Node):
                 # drive-back below it would sit inside the robot and could
                 # veto the reset pose plan.
                 try:
-                    self._remove_front_wall_collision(
+                    self._remove_scene_collision_boxes(
                         "failure_reset", "base about to drive back"
                     )
                 except Exception as exc:
@@ -3488,19 +3506,30 @@ class GeminiPickPlaceExecutor(Node):
             )
             target_point.point.x = x_ref
 
-    def _remove_front_wall_collision(self, label, reason):
-        """Clear any previously published front-wall box. Without this a
-        stale wall (fitted before a drive, or mis-fitted) stays in the
+    def _remove_collision_box(self, obj_id, label, reason):
+        """Clear a previously published scene box by id. Without this a
+        stale box (fitted before a drive, or mis-fitted) stays in the
         planning scene forever and vetoes every subsequent pick plan."""
         obj = CollisionObject()
         obj.header.frame_id = "base_footprint"
         obj.header.stamp = self.get_clock().now().to_msg()
-        obj.id = "lidar_front_wall"
+        obj.id = obj_id
         obj.operation = CollisionObject.REMOVE
         self.collision_pub.publish(obj)
         self.get_logger().warn(
-            f"[{label}] front wall collision object removed: {reason}"
+            f"[{label}] collision object '{obj_id}' removed: {reason}"
         )
+
+    def _remove_front_wall_collision(self, label, reason):
+        self._remove_collision_box("lidar_front_wall", label, reason)
+
+    def _remove_scene_collision_boxes(self, label, reason):
+        """Both lidar-anchored boxes (front wall + printer bed) are fixed
+        in base_footprint; any base drive leaves them stale (eventually
+        inside the robot). Call before every drive; the next pick_prep
+        re-fits both from a fresh scan."""
+        self._remove_collision_box("lidar_front_wall", label, reason)
+        self._remove_collision_box("printer_bed", label, reason)
 
     def _publish_front_wall_collision(self, label):
         """Fit the arena's front wall from the latest lidar scan (median x
@@ -3558,6 +3587,57 @@ class GeminiPickPlaceExecutor(Node):
         self.get_logger().info(
             f"[{label}] front wall collision object at x={wall_x:.3f} "
             f"({n_fit} scan points)"
+        )
+
+    def _publish_printer_bed_collision(self, label, table_z):
+        """Publish the printer bed as a horizontal slab: front face at
+        wall_x + bed_offset_x_m (live lidar, same chain as the slicer x
+        reference), top at table_z - clearance. Planning then rejects
+        pick poses that dip the gripper servo or claws below the bed —
+        the two ways picks have physically crashed into it — and the
+        roll-twin candidates give planning a bed-clearing alternative to
+        fall through to. Re-fit per pick attempt; removed before drives
+        (base_footprint-fixed, goes stale like the wall box)."""
+        if not bool(self.get_parameter("bed_collision").value):
+            return
+        fit = self._fit_front_wall_x()
+        if fit is None:
+            self._remove_collision_box(
+                "printer_bed", label,
+                "no lidar wall fit to anchor the bed slab this attempt"
+            )
+            return
+        wall_x, n_fit = fit
+        bed_front_x = wall_x + float(self.get_parameter("bed_offset_x_m").value)
+        halfwidth = float(self.get_parameter("bed_collision_halfwidth_m").value)
+        depth = float(self.get_parameter("bed_collision_depth_m").value)
+        thickness = float(self.get_parameter("bed_collision_thickness_m").value)
+        clearance = float(self.get_parameter("bed_collision_clearance_m").value)
+        top_z = float(table_z) - clearance
+
+        obj = CollisionObject()
+        obj.header.frame_id = "base_footprint"
+        obj.header.stamp = self.get_clock().now().to_msg()
+        obj.id = "printer_bed"
+        box = SolidPrimitive()
+        box.type = SolidPrimitive.BOX
+        box.dimensions = [depth, 2.0 * halfwidth, thickness]
+        from geometry_msgs.msg import Pose as _Pose
+
+        pose = _Pose()
+        pose.position.x = bed_front_x + depth / 2.0
+        pose.position.y = 0.0
+        pose.position.z = top_z - thickness / 2.0
+        pose.orientation.w = 1.0
+        obj.primitives = [box]
+        obj.primitive_poses = [pose]
+        obj.operation = CollisionObject.ADD  # same id -> replaces in scene
+        self.collision_pub.publish(obj)
+        self.get_logger().info(
+            f"[{label}] printer bed collision slab: front x={bed_front_x:.3f} "
+            f"(wall {wall_x:.3f} + offset), top z={top_z:.3f} "
+            f"(table_z {float(table_z):.3f} - clearance {clearance:.3f}), "
+            f"{depth:.2f}x{2.0 * halfwidth:.2f}x{thickness:.2f} m"
         )
 
     def _resolve_table_z(self, measured_z_bottom):
@@ -3644,6 +3724,7 @@ class GeminiPickPlaceExecutor(Node):
         pick_lift = float(self.get_parameter("pick_lift_m").value)
         verify_show_pose = str(self.get_parameter("verify_show_pose_named").value)
         self._publish_front_wall_collision("pick_prep")
+        self._publish_printer_bed_collision("pick_prep", table_z)
         grasp_descent = self._clamp_grasp_descent(
             target_point, object_height_m, table_z
         )
@@ -3725,7 +3806,7 @@ class GeminiPickPlaceExecutor(Node):
             # drives or it goes stale (and can land inside the robot).
             ("06b_drive_to_destination",
              lambda: (
-                 self._remove_front_wall_collision(
+                 self._remove_scene_collision_boxes(
                      "06b_drive_to_destination", "base about to drive"
                  ),
                  self.drive_to_feasible(
@@ -3783,8 +3864,8 @@ class GeminiPickPlaceExecutor(Node):
         # The wall box is fixed in base_footprint; the drives below would
         # leave it stale (eventually inside the robot). The next pick
         # attempt re-fits it from a fresh scan at pick_prep.
-        self._remove_front_wall_collision(
-            "retry", "base about to drive; wall will be re-fit at pick_prep"
+        self._remove_scene_collision_boxes(
+            "retry", "base about to drive; boxes re-fit at pick_prep"
         )
         # The approach drives usually leave the target inside the Astra's
         # ~0.6 m near blind zone; re-perceiving from there yields not_found

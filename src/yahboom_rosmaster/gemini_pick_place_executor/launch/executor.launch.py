@@ -54,6 +54,15 @@ FORWARDED_PARAMS = [
     ("bed_offset_x_m", "0.155"),
     ("print_y_m", "-1.0"),
     ("object_half_depth_m", "0.015"),
+    # Printer-bed collision slab (front at wall_x + bed_offset_x_m, top
+    # at table_z - clearance): planning rejects poses dipping the gripper
+    # servo/claws below the bed (physical crashes + false contact stops).
+    # Hardware passes bed_collision:=true; default false preserves sim.
+    ("bed_collision", "false"),
+    ("bed_collision_halfwidth_m", "0.30"),
+    ("bed_collision_depth_m", "0.40"),
+    ("bed_collision_thickness_m", "0.03"),
+    ("bed_collision_clearance_m", "0.005"),
     ("joint_limit_margin_rad", "0.15"),
     # Camera-vs-lidar wall cross-check (front_wall field of the MAIN
     # Gemini plan — same image, no extra call): logs delta(cam-lidar) of
