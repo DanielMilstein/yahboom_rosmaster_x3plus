@@ -302,7 +302,13 @@ class GeminiPickPlaceExecutor(Node):
         #     grasp pipeline targets; engagement advances past it).
         # Setting print_y_m >= 0 activates the mode and overrides the
         # vision x. Robot x = printer y (depth); y stays vision.
-        self.declare_parameter("bed_offset_x_m", 0.32)
+        # 0.155 is calibrated from the first physically successful grasp:
+        # the validated taped chain wall->near-face 0.165 at print_y 0.025,
+        # half_depth 0.015 -> 0.165 - 0.025 + 0.015 = 0.155. Matches the
+        # user's independent wall->bed-border tape (~0.15). The old 0.32
+        # was fitted during the gripper_tip_offset double-count era and
+        # was absorbing that 9 cm kinematic error — void.
+        self.declare_parameter("bed_offset_x_m", 0.155)
         self.declare_parameter("print_y_m", -1.0)
         self.declare_parameter("object_half_depth_m", 0.015)
         # Reject IK solutions with positioning joints (1-4) within this
@@ -3409,6 +3415,18 @@ class GeminiPickPlaceExecutor(Node):
         with the lidar-referenced value (fixed demo placements only)."""
         fit = self._fit_front_wall_x()
         if fit is None:
+            if (
+                float(self.get_parameter("print_y_m").value) >= 0.0
+                or bool(self.get_parameter("wall_ref_override").value)
+            ):
+                # The x override was requested but there is no wall to
+                # reference — the pick will run on raw vision x, which
+                # has read 3-6 cm long on this scene. Loud, not silent.
+                self.get_logger().warn(
+                    "wall reference: override requested but the lidar "
+                    "wall fit FAILED this perception — falling back to "
+                    "vision x (recently biased +3-6 cm on this scene)"
+                )
             return
         wall_x, n_fit = fit
         gap = float(target_point.point.x) - wall_x

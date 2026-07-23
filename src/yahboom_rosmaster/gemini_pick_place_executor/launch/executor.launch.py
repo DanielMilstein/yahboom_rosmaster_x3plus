@@ -45,13 +45,13 @@ FORWARDED_PARAMS = [
     ("wall_ref_tol_m", "0.06"),
     ("wall_ref_override", "false"),
     # Slicer-referenced x: pass print_y_m (slicer y of the object CENTER,
-    # in METERS) to derive x from the live lidar wall fit. bed_offset_x_m
-    # is wall face -> the SLICER'S y=0 origin (the printable-area origin,
-    # ~17 cm behind the machine's physical front on the XL — tape to the
-    # homed nozzle, not to the bed lip). 0.32 calibrated from freeze-tape
-    # ground truth across two cube positions (gaps 0.31 @ y~0.005 and
-    # 0.326 @ y=0.025 both reconcile to 0.32).
-    ("bed_offset_x_m", "0.32"),
+    # in METERS) to derive x from the live lidar wall fit — no per-print
+    # taping. bed_offset_x_m is wall face -> the slicer's y=0 line (the
+    # bed front border on this setup). 0.155 back-derived from the first
+    # successful grasp (validated wall->near-face 0.165 @ print_y 0.025,
+    # half_depth 0.015); agrees with the user's ~0.15 tape. The old 0.32
+    # was contaminated by the gripper_tip_offset double-count — void.
+    ("bed_offset_x_m", "0.155"),
     ("print_y_m", "-1.0"),
     ("object_half_depth_m", "0.015"),
     ("joint_limit_margin_rad", "0.15"),
