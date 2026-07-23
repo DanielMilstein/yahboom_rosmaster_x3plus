@@ -46,16 +46,18 @@
         <joint name="arm_joint4" value="-1.5708"/>
         <joint name="arm_joint5" value="0"/>
     </group_state>
-    <!-- Verify-show pose: folds the arm forward to hold the gripper in front of
-         the chassis camera. arm_joint2 lowered (0.7854 -> 1.05 rad) on 2026-06-19
-         so the held object sits lower, inside the camera's downward view.
-         Nudge arm_joint2 +/-0.1 if the gripper is too low/high in frame. -->
+    <!-- Verify-show pose: TAUGHT on the real robot (teach_pose.py,
+         2026-07-23) framed in the chassis camera via web_video_server.
+         The previous state (j2=1.05, j3=-0.1745, j4=-1.5708) was in
+         base_link<->arm_link3 model collision and never planned on
+         hardware. j5=+0.5 rolls the held cube slightly so the verify
+         view doesn't read as a cube lying flat on the bed. -->
     <group_state name="show" group="arm_group">
         <joint name="arm_joint1" value="0"/>
-        <joint name="arm_joint2" value="1.05"/>
-        <joint name="arm_joint3" value="-0.1745"/>
-        <joint name="arm_joint4" value="-1.5708"/>
-        <joint name="arm_joint5" value="0"/>
+        <joint name="arm_joint2" value="-0.0175"/>
+        <joint name="arm_joint3" value="-1.5010"/>
+        <joint name="arm_joint4" value="1.2043"/>
+        <joint name="arm_joint5" value="0.5"/>
     </group_state>
     <group_state name="close" group="grip_group">
         <joint name="grip_joint" value="0"/>
