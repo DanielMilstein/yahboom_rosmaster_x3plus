@@ -3866,6 +3866,23 @@ class GeminiPickPlaceExecutor(Node):
         table_z_param = float(self.get_parameter("table_z_m").value)
         if table_z_source != "perception":
             return table_z_param
+        if self._last_bed_probe_z is not None:
+            # The bed probe hits the BED beside the object — a direct
+            # surface measurement, strictly better than inferring the floor
+            # from the object's measured bottom (and already +-6 cm guarded
+            # against the param when taken). Crucially it keeps the pick
+            # floor and the bed collision slab on the SAME surface belief:
+            # they disagreed once (floor fell back to the 0.160 param while
+            # the slab anchored to the 0.170 probe) and the floor-clamped
+            # fingertip target sat AT the slab top, putting every pick
+            # orientation's goal state in collision — 04_pick could not
+            # plan at all. floor = probe + safety vs slab top = probe -
+            # clearance guarantees their separation by construction.
+            self.get_logger().info(
+                f"table_z source=perception: using bed probe "
+                f"{self._last_bed_probe_z:.3f} as the surface"
+            )
+            return float(self._last_bed_probe_z)
         if measured_z_bottom is None:
             self.get_logger().info(
                 f"table_z source=perception unavailable; falling back to "
