@@ -3990,10 +3990,25 @@ class GeminiPickPlaceExecutor(Node):
             ("05_close_gripper",
              lambda: self._close_gripper_until_contact(
                  "05_close_gripper", expected_grip=grip_value)),
-            # Lift straight up with the object for the same reason.
+            # Lift straight up with the object for the same reason. The bed
+            # slab must be dropped first: it guarded the DESCENT, but servo
+            # droop settles the executed grasp a few mm below the commanded
+            # (slab-clearing) pose — the lift then plans FROM that drooped
+            # state, which the model finds in contact with the slab, and
+            # the plan is rejected ('Start state appears to be in
+            # collision'), aborting a pick that is physically holding the
+            # cube. The lift moves straight AWAY from the bed; the next
+            # attempt re-fits the slab at pick_prep.
             ("06_lift",
-             lambda: self.plan_and_execute_pose(
-                 self.top_down_pose(pick_target, pick_lift), "06_lift")),
+             lambda: (
+                 self._remove_collision_box(
+                     "printer_bed", "06_lift",
+                     "descent done; drooped grasp state grazes the slab "
+                     "and would veto the lift plan"
+                 ),
+                 self.plan_and_execute_pose(
+                     self.top_down_pose(pick_target, pick_lift), "06_lift"),
+             )[1]),
             # Only strike the 'show' pose when Gemini verification will
             # actually look at it. Best-effort either way: the SRDF 'show'
             # state fails planning on hardware (model finds a
