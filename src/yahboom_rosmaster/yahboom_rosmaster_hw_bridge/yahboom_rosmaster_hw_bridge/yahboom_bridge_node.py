@@ -359,6 +359,10 @@ class YahboomBridgeNode(Node):
         # Single-sample spike filter state: joint -> candidate value of an
         # implausibly large jump awaiting confirmation by the next read.
         self._pending_reads: Dict[str, float] = {}
+        # Last commanded servo angle (deg) per joint — reference for the
+        # zero-read garbage gate below. Only populated once a trajectory
+        # has commanded the joint.
+        self._last_commanded_deg: Dict[str, float] = {}
         rate = float(self.get_parameter("joint_state_rate_hz").value)
         if rate > 0.0:
             period = 1.0 / rate
@@ -384,6 +388,28 @@ class YahboomBridgeNode(Node):
                 # accept plausibly-valid degree values (0..180 with a touch
                 # of slack for calibration jitter).
                 if deg is None or deg < -5 or deg > 185:
+                    continue
+                # Zero-read garbage gate: corrupted bus reads return exactly
+                # 0 deg (observed constantly on servo 5 — end of the daisy
+                # chain — and once on servo 4), which is a VALID-looking
+                # angle and even arrives in bursts that defeat a
+                # consecutive-sample filter. But the bridge knows what it
+                # commanded: no real state sits at ~0 deg while its command
+                # is far away (droop ~3 deg, a hard jam stalls ~23 deg). A
+                # near-zero read with the command >45 deg away is garbage.
+                # (Rare miss accepted: hand-placing a joint exactly at its
+                # -90 deg limit while its last command was far away.)
+                cmd_deg = self._last_commanded_deg.get(jn)
+                if (
+                    float(deg) <= 5.0
+                    and cmd_deg is not None
+                    and abs(float(deg) - cmd_deg) > 45.0
+                ):
+                    self.get_logger().debug(
+                        f"[joint_state] {jn}: zero-read glitch rejected "
+                        f"(read {float(deg):.1f} deg, commanded "
+                        f"{cmd_deg:.1f} deg)"
+                    )
                     continue
                 rad = self._joint_map.deg_to_rad(jn, float(deg))
                 # Spike filter: a garbage serial read can also return a
@@ -518,6 +544,7 @@ class YahboomBridgeNode(Node):
                     deg = int(round(self._joint_map.rad_to_deg(jn, float(rad))))
                     try:
                         self._driver.set_uart_servo_angle(sid, deg, run_ms)
+                        self._last_commanded_deg[jn] = float(deg)
                     except Exception as exc:  # noqa: BLE001
                         self.get_logger().error(
                             f"[{label}] set_uart_servo_angle(id={sid}, "
