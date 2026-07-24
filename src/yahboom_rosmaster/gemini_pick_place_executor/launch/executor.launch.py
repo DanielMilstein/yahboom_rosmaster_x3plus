@@ -63,6 +63,12 @@ FORWARDED_PARAMS = [
     ("bed_collision_depth_m", "0.40"),
     ("bed_collision_thickness_m", "0.03"),
     ("bed_collision_clearance_m", "0.005"),
+    # Wall drive gate: cap forward base drives so the chassis front stays
+    # clear of the lidar-known front wall (live fit, or the dead-reckoned
+    # estimate inside the lidar blind zone). Hardware passes true.
+    ("wall_drive_gate", "false"),
+    ("chassis_front_x_m", "0.13"),
+    ("wall_stop_clearance_m", "0.03"),
     ("joint_limit_margin_rad", "0.15"),
     # Camera-vs-lidar wall cross-check (front_wall field of the MAIN
     # Gemini plan — same image, no extra call): logs delta(cam-lidar) of

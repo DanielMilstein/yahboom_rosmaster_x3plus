@@ -329,6 +329,18 @@ class GeminiPickPlaceExecutor(Node):
         # claws close to the bed — without clearance the box would veto
         # the exact pose that succeeds.
         self.declare_parameter("bed_collision_clearance_m", 0.005)
+        # Wall drive gate: cap every forward base drive so the chassis
+        # front stays clear of the lidar-known front wall (live fit, or the
+        # dead-reckoned estimate when the wall is inside the lidar blind
+        # zone). Without it the destination drive pushed the chassis into
+        # the wall — wheels slipped, odometry went fictional, and the
+        # place + return both inherited the error. Default false preserves
+        # sim; hardware passes wall_drive_gate:=true.
+        self.declare_parameter("wall_drive_gate", False)
+        # Chassis front edge from base_footprint: URDF chassis box front is
+        # 0.119 m (length 0.300, x offset -0.031) + bumper slack.
+        self.declare_parameter("chassis_front_x_m", 0.13)
+        self.declare_parameter("wall_stop_clearance_m", 0.03)
         # Reject IK solutions with positioning joints (1-4) within this
         # margin of the +-1.5708 servo range ends — proprioception lies
         # there (folded-elbow picks missed 4-12cm short with clean
@@ -538,6 +550,16 @@ class GeminiPickPlaceExecutor(Node):
         # remember and stop re-attempting (and re-spamming OMPL errors)
         # every pick attempt of the run.
         self._show_pose_unplannable = False
+        # Dead-reckoned front-wall x estimate: refreshed by every live lidar
+        # wall fit, decremented by every base drive. Survives the close-range
+        # blind zone where _fit_front_wall_x fails (wall inside the lidar min
+        # range) — exactly where the bed slab and the wall drive gate are
+        # needed most.
+        self._wall_x_est = None
+        # Orientation candidate index of the last successfully EXECUTED pose
+        # — droop corrections re-solve IK locked to it so a failed re-solve
+        # can never fall through to a different tilt mid-descent.
+        self._last_executed_orient_idx = None
         self.base_point_event = threading.Event()
         self.worker_started = False
         self.worker_lock = threading.Lock()
@@ -1782,6 +1804,9 @@ class GeminiPickPlaceExecutor(Node):
         ok = self._plan_and_execute_pose_once(pose_stamped, label)
         if not ok:
             return False
+        # Corrections must keep the tilt that is already executing — lock
+        # them to the orientation the initial attempt actually ran with.
+        executed_idx = self._last_executed_orient_idx
         iters = int(self.get_parameter("pose_correction_iters").value)
         tol = float(self.get_parameter("pose_correction_tol_m").value)
         tx = float(pose_stamped.pose.position.x)
@@ -1813,7 +1838,8 @@ class GeminiPickPlaceExecutor(Node):
                 f"{corrected.pose.position.y:.3f},{corrected.pose.position.z:.3f})"
             )
             if not self._plan_and_execute_pose_once(
-                corrected, f"{label}_corr{i + 1}"
+                corrected, f"{label}_corr{i + 1}",
+                lock_orient_idx=executed_idx,
             ):
                 self.get_logger().warn(
                     f"[{label}] droop correction failed to plan/execute; "
@@ -1822,7 +1848,12 @@ class GeminiPickPlaceExecutor(Node):
                 break
         return True
 
-    def _plan_and_execute_pose_once(self, pose_stamped, label):
+    def _plan_and_execute_pose_once(self, pose_stamped, label, lock_orient_idx=None):
+        """lock_orient_idx: restrict the attempt to that single orientation
+        candidate — used by droop corrections so a failed IK re-solve can
+        never fall through to a different tilt mid-motion (observed crash:
+        correction flipped #0 -> #4 one cm above the printer bed, swinging
+        the gripper servo into it)."""
         if self.arm_component is None or self.moveit is None:
             self.get_logger().error(f"[{label}] MoveItPy not initialized")
             return False
@@ -1862,9 +1893,18 @@ class GeminiPickPlaceExecutor(Node):
         # every failed candidate here costs ik_timeout_sec x len(_IK_SEEDS)
         # (~20 s), and the search's winner almost always solves.
         ordered = list(enumerate(candidates))
-        preferred = getattr(self, "_preferred_orient_idx", None)
-        if preferred is not None and 0 <= preferred < len(ordered):
-            ordered.insert(0, ordered.pop(preferred))
+        if lock_orient_idx is not None:
+            ordered = [o for o in ordered if o[0] == int(lock_orient_idx)]
+            if not ordered:
+                self.get_logger().warn(
+                    f"[{label}] locked orientation #{lock_orient_idx} not in "
+                    "candidate list; skipping"
+                )
+                return False
+        else:
+            preferred = getattr(self, "_preferred_orient_idx", None)
+            if preferred is not None and 0 <= preferred < len(ordered):
+                ordered.insert(0, ordered.pop(preferred))
         for idx, (qx, qy, qz, qw) in ordered:
             ox, oy, oz = rotate_vector_by_quat(tip_offset, qx, qy, qz, qw)
             wx = fx - ox
@@ -1893,7 +1933,20 @@ class GeminiPickPlaceExecutor(Node):
             )
             self.arm_component.set_start_state_to_current_state()
             self.arm_component.set_goal_state(robot_state=state)
-            return self.plan_and_execute(self.arm_component, arm_name, label)
+            ok = self.plan_and_execute(self.arm_component, arm_name, label)
+            if ok:
+                self._last_executed_orient_idx = idx
+            return ok
+
+        if lock_orient_idx is not None:
+            # No orientation fall-through and no position-only fallback for
+            # a locked (correction) attempt — the caller keeps the
+            # uncorrected pose instead.
+            self.get_logger().warn(
+                f"[{label}] locked orientation #{lock_orient_idx} "
+                "unsolvable at the corrected target"
+            )
+            return False
 
         self.get_logger().warn(
             f"[{label}] all {len(candidates)} candidate orientations failed; "
@@ -1916,6 +1969,9 @@ class GeminiPickPlaceExecutor(Node):
         self.arm_component.set_goal_state(motion_plan_constraints=[fallback])
         if self.plan_and_execute(self.arm_component, arm_name, label):
             self.get_logger().info(f"[{label}] position-only fallback succeeded")
+            # No specific orientation executed — corrections must not lock
+            # onto a stale index from an earlier motion.
+            self._last_executed_orient_idx = None
             return True
         self.get_logger().error(
             f"[{label}] IK + position-only fallback both failed"
@@ -2270,6 +2326,21 @@ class GeminiPickPlaceExecutor(Node):
             dx_values = [v for v in dx_values if v <= max_dx + 1e-9]
             if not dx_values:
                 dx_values = [max(0.0, float(max_dx))]
+        # Wall gate: never offer a candidate that parks the chassis inside
+        # the front wall's clearance (the crash mode: forward drive chosen
+        # with the wall ~0.17 m ahead -> wheels slip, odometry fiction).
+        wall_cap = self._max_forward_dx()
+        if wall_cap is not None:
+            before_n = len(dx_values)
+            dx_values = [v for v in dx_values if v <= wall_cap + 1e-9]
+            if not dx_values:
+                dx_values = [0.0]
+            if len(dx_values) < before_n:
+                self.get_logger().info(
+                    f"find_feasible_drive: wall gate caps forward drive at "
+                    f"{max(0.0, wall_cap):.3f} m "
+                    f"({before_n - len(dx_values)} dx candidates dropped)"
+                )
         # Candidate ordering. "min_drive" (legacy) tries the smallest base
         # motion first. "min_reach" (default) prefers the drive that leaves
         # the target closest to the arm's IDEAL reach (mid-envelope: least
@@ -2544,6 +2615,23 @@ class GeminiPickPlaceExecutor(Node):
             return
         cx = max(-cap, min(cap, -ex))
         cy = max(-cap, min(cap, -ey))
+        if cx > 0.0:
+            # A forward "shortfall" against a wall the robot is touching is
+            # slip, not under-drive — pushing the difference just grinds
+            # the wheels into the wall (observed: correction +0.038 with
+            # the chassis already on the wall). Cap it like any drive.
+            wall_cap = self._max_forward_dx()
+            if wall_cap is not None and cx > wall_cap:
+                clamped = max(0.0, wall_cap)
+                self.get_logger().warn(
+                    f"[{label}] lidar correction forward component "
+                    f"{cx:+.3f} clamped to {clamped:+.3f} by the front-wall "
+                    "gate (likely wheel slip against the wall, not "
+                    "under-drive)"
+                )
+                cx = clamped
+        if abs(cx) < 1e-6 and abs(cy) < 1e-6:
+            return
         self.get_logger().info(
             f"[{label}] lidar correction: driving ({cx:+.3f}, {cy:+.3f}) "
             "to cover the measured shortfall"
@@ -2559,6 +2647,15 @@ class GeminiPickPlaceExecutor(Node):
         axes_mode = str(self.get_parameter("drive_axes").value).lower()
         dx = dx if axes_mode in ("xy", "x_only") else 0.0
         dy = dy if axes_mode in ("xy", "y_only") else 0.0
+        wall_cap = self._max_forward_dx()
+        if wall_cap is not None and dx > wall_cap:
+            clamped = max(0.0, wall_cap)
+            self.get_logger().warn(
+                f"[{label}] staging dx {dx:.3f} clamped to {clamped:.3f} by "
+                "the front-wall gate (re-perception will just be from "
+                "farther out)"
+            )
+            dx = clamped
         self.get_logger().info(
             f"[{label}] staging drive dx={dx:.3f} dy={dy:.3f} "
             "(no IK requirement; re-perception follows)"
@@ -2693,6 +2790,30 @@ class GeminiPickPlaceExecutor(Node):
         initial_err = math.sqrt(
             (goal_x_w - x0) ** 2 + (goal_y_w - y0) ** 2
         )
+        # The param timeout is a floor, not the whole budget: a long return
+        # at low speed exceeds it by pure arithmetic (0.68 m at 0.05 m/s is
+        # already 13.5 s) and a mid-return abort strands the robot.
+        needed = initial_err / max(1e-6, max_speed) * 1.5 + 3.0
+        if needed > timeout:
+            self.get_logger().info(
+                f"drive_relative_base: extending timeout {timeout:.0f}s -> "
+                f"{needed:.0f}s for a {initial_err:.2f} m drive"
+            )
+            timeout = needed
+
+        def settle_wall_est():
+            # Account the ACTUAL forward motion (odometry) into the
+            # dead-reckoned wall estimate — partial drives (timeout,
+            # divergence abort) moved the base too.
+            if self._wall_x_est is None:
+                return
+            cur_od = self.latest_odom
+            if cur_od is None:
+                return
+            moved_dx = c0 * (
+                float(cur_od.pose.pose.position.x) - x0
+            ) + s0 * (float(cur_od.pose.pose.position.y) - y0)
+            self._wall_x_est -= moved_dx
         min_err = initial_err
         deadline = self.get_clock().now().nanoseconds / 1e9 + timeout
         while rclpy.ok():
@@ -2700,6 +2821,7 @@ class GeminiPickPlaceExecutor(Node):
             if now > deadline:
                 self.get_logger().error("drive_relative_base: timeout")
                 self.publish_zero_velocity()
+                settle_wall_est()
                 return False
             cur = self.latest_odom
             if cur is None:
@@ -2731,6 +2853,7 @@ class GeminiPickPlaceExecutor(Node):
                     "inverted or mis-scaled (check car_type). Stopping."
                 )
                 self.publish_zero_velocity()
+                settle_wall_est()
                 return False
             if err_norm < tol:
                 self.publish_zero_velocity()
@@ -2740,6 +2863,7 @@ class GeminiPickPlaceExecutor(Node):
                 self.get_logger().info(
                     f"drive_relative_base: arrived (err={err_norm:.4f} m)"
                 )
+                settle_wall_est()
                 return True
 
             # Rotate world-frame error into the current base frame.
@@ -2759,6 +2883,7 @@ class GeminiPickPlaceExecutor(Node):
             self.cmd_vel_pub.publish(twist)
             time.sleep(period)
         self.publish_zero_velocity()
+        settle_wall_est()
         return False
 
     def drive_relative_base_open_loop(self, dx_base, dy_base):
@@ -2791,6 +2916,8 @@ class GeminiPickPlaceExecutor(Node):
         if settle > 0.0:
             time.sleep(settle)
         self.get_logger().info("open-loop drive: done")
+        if self._wall_x_est is not None:
+            self._wall_x_est -= float(dx_base)
         return True
 
     def drive_back_to(self, initial_odom):
@@ -2816,8 +2943,15 @@ class GeminiPickPlaceExecutor(Node):
             f"drive_back_to: returning by base-frame ({dx_base:.3f},{dy_base:.3f})"
         )
         ok = self.drive_relative_base(dx_base, dy_base)
-        if ok:
-            self._lidar_return_to_anchor()
+        if not ok:
+            # A timed-out / diverged return still moved the base most of the
+            # way — and slip-corrupted odometry is precisely what the anchor
+            # scan-match (absolute, odometry-free) can still fix.
+            self.get_logger().warn(
+                "drive_back_to: odometry return incomplete; attempting the "
+                "lidar anchor refinement anyway"
+            )
+        self._lidar_return_to_anchor()
         return ok
 
     def _lidar_return_to_anchor(self):
@@ -3212,7 +3346,30 @@ class GeminiPickPlaceExecutor(Node):
         near = sel[np.abs(sel[:, 0] - wall_x) < 0.06]
         if len(near) < 15:
             return None
-        return float(np.median(near[:, 0])), len(near)
+        wall_x_fit = float(np.median(near[:, 0]))
+        # Single choke point: every successful fit refreshes the
+        # dead-reckoned estimate used when the wall is too close to fit.
+        self._wall_x_est = wall_x_fit
+        return wall_x_fit, len(near)
+
+    def _max_forward_dx(self):
+        """Forward drive budget that keeps the chassis front clear of the
+        front wall: wall_x (live fit, else the dead-reckoned estimate) -
+        chassis_front_x_m - wall_stop_clearance_m. None = gate disabled or
+        no wall knowledge (drives unconstrained, as before). Can be
+        negative when the chassis is already at/inside the clearance —
+        callers must then refuse any forward motion."""
+        if not bool(self.get_parameter("wall_drive_gate").value):
+            return None
+        fit = self._fit_front_wall_x()
+        wall_x = fit[0] if fit is not None else self._wall_x_est
+        if wall_x is None:
+            return None
+        return (
+            float(wall_x)
+            - float(self.get_parameter("chassis_front_x_m").value)
+            - float(self.get_parameter("wall_stop_clearance_m").value)
+        )
 
     def _refine_target_pixels(self, image, box):
         """Segment the bright object inside Gemini's (normalized) bbox and
@@ -3648,13 +3805,23 @@ class GeminiPickPlaceExecutor(Node):
         if not bool(self.get_parameter("bed_collision").value):
             return
         fit = self._fit_front_wall_x()
-        if fit is None:
+        if fit is not None:
+            wall_x, n_fit = fit
+            wall_src = f"{n_fit} scan points"
+        elif self._wall_x_est is not None:
+            # At pick range the wall sits inside the lidar's blind zone and
+            # the live fit fails — exactly when the slab matters most. Fall
+            # back to the dead-reckoned estimate (last live fit minus every
+            # drive since).
+            wall_x = float(self._wall_x_est)
+            wall_src = "dead-reckoned wall"
+        else:
             self._remove_collision_box(
                 "printer_bed", label,
-                "no lidar wall fit to anchor the bed slab this attempt"
+                "no lidar wall fit (live or dead-reckoned) to anchor the "
+                "bed slab this attempt"
             )
             return
-        wall_x, n_fit = fit
         bed_front_x = wall_x + float(self.get_parameter("bed_offset_x_m").value)
         halfwidth = float(self.get_parameter("bed_collision_halfwidth_m").value)
         depth = float(self.get_parameter("bed_collision_depth_m").value)
@@ -3682,7 +3849,7 @@ class GeminiPickPlaceExecutor(Node):
         self.collision_pub.publish(obj)
         self.get_logger().info(
             f"[{label}] printer bed collision slab: front x={bed_front_x:.3f} "
-            f"(wall {wall_x:.3f} + offset), top z={top_z:.3f} "
+            f"(wall {wall_x:.3f} [{wall_src}] + offset), top z={top_z:.3f} "
             f"(table_z {float(table_z):.3f} - clearance {clearance:.3f}), "
             f"{depth:.2f}x{2.0 * halfwidth:.2f}x{thickness:.2f} m"
         )
