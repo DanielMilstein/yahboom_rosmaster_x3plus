@@ -62,7 +62,10 @@ FORWARDED_PARAMS = [
     ("bed_collision_halfwidth_m", "0.30"),
     ("bed_collision_depth_m", "0.40"),
     ("bed_collision_thickness_m", "0.03"),
-    ("bed_collision_clearance_m", "0.005"),
+    # 0.012, sized with the 0.025 mesh margin in _pick_floor_z: floor lands
+    # at surface+0.013 (the proven grasp band) with 25 mm slab separation
+    # (mesh dips ~20.5 mm below the fingertip frame).
+    ("bed_collision_clearance_m", "0.012"),
     # Wall drive gate: cap forward base drives so the chassis front stays
     # clear of the lidar-known front wall (live fit, or the dead-reckoned
     # estimate inside the lidar blind zone). Hardware passes true.

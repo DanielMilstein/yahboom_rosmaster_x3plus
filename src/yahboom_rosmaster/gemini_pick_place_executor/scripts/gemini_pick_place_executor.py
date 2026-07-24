@@ -324,11 +324,16 @@ class GeminiPickPlaceExecutor(Node):
         self.declare_parameter("bed_collision_halfwidth_m", 0.30)
         self.declare_parameter("bed_collision_depth_m", 0.40)
         self.declare_parameter("bed_collision_thickness_m", 0.03)
-        # Top of the slab sits this far BELOW table_z: collision meshes
-        # carry a few mm of slop, and the validated grasp works with the
-        # claws close to the bed — without clearance the box would veto
-        # the exact pose that succeeds.
-        self.declare_parameter("bed_collision_clearance_m", 0.005)
+        # Top of the slab sits this far BELOW the bed surface. Sized
+        # together with the 0.025 mesh margin in _pick_floor_z: the
+        # gripper mesh dips ~20.5 mm below the fingertip frame (21 mm
+        # separation planned, 20 mm was vetoed twice), and the grasp wants
+        # the fingertip at the cube's mid-height (~surface + 0.015). With
+        # clearance 0.012 the floor lands at surface + 0.013 — the proven
+        # grasp band — while keeping 25 mm of slab separation and still
+        # vetoing deep-dip tilts (>25 mm below the fingertip, the servo
+        # crash pose).
+        self.declare_parameter("bed_collision_clearance_m", 0.012)
         # Wall drive gate: cap every forward base drive so the chassis
         # front stays clear of the lidar-known front wall (live fit, or the
         # dead-reckoned estimate when the wall is inside the lidar blind
@@ -3932,7 +3937,11 @@ class GeminiPickPlaceExecutor(Node):
             clearance = float(
                 self.get_parameter("bed_collision_clearance_m").value
             )
-            mesh_floor = float(table_z) - clearance + 0.02
+            # Mesh margin 0.025: the dip is ~20.5 mm empirically (goals at
+            # 21 mm above the slab top planned; 20 mm was vetoed twice),
+            # +4 mm headroom. Grasp height is preserved by the slab's
+            # clearance sitting deeper (0.012), not by raising the floor.
+            mesh_floor = float(table_z) - clearance + 0.025
             if mesh_floor > floor:
                 self.get_logger().info(
                     f"pick floor raised {floor:.3f} -> {mesh_floor:.3f}: "
