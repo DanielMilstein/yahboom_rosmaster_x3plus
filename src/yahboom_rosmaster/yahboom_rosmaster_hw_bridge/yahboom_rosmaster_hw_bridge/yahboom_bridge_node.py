@@ -356,6 +356,9 @@ class YahboomBridgeNode(Node):
         self._last_positions: Dict[str, float] = {
             j: 0.0 for j in self._joint_map.all_joints
         }
+        # Single-sample spike filter state: joint -> candidate value of an
+        # implausibly large jump awaiting confirmation by the next read.
+        self._pending_reads: Dict[str, float] = {}
         rate = float(self.get_parameter("joint_state_rate_hz").value)
         if rate > 0.0:
             period = 1.0 / rate
@@ -382,7 +385,33 @@ class YahboomBridgeNode(Node):
                 # of slack for calibration jitter).
                 if deg is None or deg < -5 or deg > 185:
                     continue
-                self._last_positions[jn] = self._joint_map.deg_to_rad(jn, float(deg))
+                rad = self._joint_map.deg_to_rad(jn, float(deg))
+                # Spike filter: a garbage serial read can also return a
+                # VALID-looking angle — observed: servo 5 intermittently
+                # reads 0 deg (= -1.5708 rad through the map), flapping
+                # /joint_states between the true position and -1.5708 and
+                # randomly failing MoveIt's start-state validation. Real
+                # motion at 15 Hz moves ~0.1 rad/sample, so a jump > 0.5
+                # rad in one sample is only accepted when the NEXT read
+                # confirms it (real jumps persist; glitches don't). Costs
+                # one cycle (~70 ms) of latency on genuinely fast moves.
+                last = self._last_positions[jn]
+                if abs(rad - last) > 0.5:
+                    pending = self._pending_reads.get(jn)
+                    if pending is not None and abs(pending - rad) < 0.2:
+                        self._pending_reads.pop(jn, None)
+                        self._last_positions[jn] = rad
+                    else:
+                        self._pending_reads[jn] = rad
+                        self.get_logger().warn(
+                            f"[joint_state] {jn}: suspicious jump "
+                            f"{last:+.3f} -> {rad:+.3f} rad in one sample; "
+                            "holding last value until confirmed",
+                            throttle_duration_sec=5.0,
+                        )
+                    continue
+                self._pending_reads.pop(jn, None)
+                self._last_positions[jn] = rad
 
         msg = JointState()
         msg.header.stamp = self.get_clock().now().to_msg()

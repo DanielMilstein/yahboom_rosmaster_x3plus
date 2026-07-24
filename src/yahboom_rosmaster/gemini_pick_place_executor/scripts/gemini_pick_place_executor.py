@@ -556,10 +556,10 @@ class GeminiPickPlaceExecutor(Node):
         # range) — exactly where the bed slab and the wall drive gate are
         # needed most.
         self._wall_x_est = None
-        # Orientation candidate index of the last successfully EXECUTED pose
-        # — droop corrections re-solve IK locked to it so a failed re-solve
-        # can never fall through to a different tilt mid-descent.
-        self._last_executed_orient_idx = None
+        # True bed surface height from the per-perception depth probe —
+        # the printer-bed slab anchors to THIS, not to table_z (which
+        # resolves to the object's bottom, a few mm higher).
+        self._last_bed_probe_z = None
         self.base_point_event = threading.Event()
         self.worker_started = False
         self.worker_lock = threading.Lock()
@@ -1804,9 +1804,6 @@ class GeminiPickPlaceExecutor(Node):
         ok = self._plan_and_execute_pose_once(pose_stamped, label)
         if not ok:
             return False
-        # Corrections must keep the tilt that is already executing — lock
-        # them to the orientation the initial attempt actually ran with.
-        executed_idx = self._last_executed_orient_idx
         iters = int(self.get_parameter("pose_correction_iters").value)
         tol = float(self.get_parameter("pose_correction_tol_m").value)
         tx = float(pose_stamped.pose.position.x)
@@ -1838,8 +1835,7 @@ class GeminiPickPlaceExecutor(Node):
                 f"{corrected.pose.position.y:.3f},{corrected.pose.position.z:.3f})"
             )
             if not self._plan_and_execute_pose_once(
-                corrected, f"{label}_corr{i + 1}",
-                lock_orient_idx=executed_idx,
+                corrected, f"{label}_corr{i + 1}"
             ):
                 self.get_logger().warn(
                     f"[{label}] droop correction failed to plan/execute; "
@@ -1848,12 +1844,11 @@ class GeminiPickPlaceExecutor(Node):
                 break
         return True
 
-    def _plan_and_execute_pose_once(self, pose_stamped, label, lock_orient_idx=None):
-        """lock_orient_idx: restrict the attempt to that single orientation
-        candidate — used by droop corrections so a failed IK re-solve can
-        never fall through to a different tilt mid-motion (observed crash:
-        correction flipped #0 -> #4 one cm above the printer bed, swinging
-        the gripper servo into it)."""
+    def _plan_and_execute_pose_once(self, pose_stamped, label):
+        """Orientation changes between the initial attempt and a droop
+        correction are allowed: with the printer-bed slab in the planning
+        scene, any candidate that would dip the gripper below the bed is
+        vetoed by collision checking — the tilt that survives is safe."""
         if self.arm_component is None or self.moveit is None:
             self.get_logger().error(f"[{label}] MoveItPy not initialized")
             return False
@@ -1893,18 +1888,9 @@ class GeminiPickPlaceExecutor(Node):
         # every failed candidate here costs ik_timeout_sec x len(_IK_SEEDS)
         # (~20 s), and the search's winner almost always solves.
         ordered = list(enumerate(candidates))
-        if lock_orient_idx is not None:
-            ordered = [o for o in ordered if o[0] == int(lock_orient_idx)]
-            if not ordered:
-                self.get_logger().warn(
-                    f"[{label}] locked orientation #{lock_orient_idx} not in "
-                    "candidate list; skipping"
-                )
-                return False
-        else:
-            preferred = getattr(self, "_preferred_orient_idx", None)
-            if preferred is not None and 0 <= preferred < len(ordered):
-                ordered.insert(0, ordered.pop(preferred))
+        preferred = getattr(self, "_preferred_orient_idx", None)
+        if preferred is not None and 0 <= preferred < len(ordered):
+            ordered.insert(0, ordered.pop(preferred))
         for idx, (qx, qy, qz, qw) in ordered:
             ox, oy, oz = rotate_vector_by_quat(tip_offset, qx, qy, qz, qw)
             wx = fx - ox
@@ -1933,20 +1919,7 @@ class GeminiPickPlaceExecutor(Node):
             )
             self.arm_component.set_start_state_to_current_state()
             self.arm_component.set_goal_state(robot_state=state)
-            ok = self.plan_and_execute(self.arm_component, arm_name, label)
-            if ok:
-                self._last_executed_orient_idx = idx
-            return ok
-
-        if lock_orient_idx is not None:
-            # No orientation fall-through and no position-only fallback for
-            # a locked (correction) attempt — the caller keeps the
-            # uncorrected pose instead.
-            self.get_logger().warn(
-                f"[{label}] locked orientation #{lock_orient_idx} "
-                "unsolvable at the corrected target"
-            )
-            return False
+            return self.plan_and_execute(self.arm_component, arm_name, label)
 
         self.get_logger().warn(
             f"[{label}] all {len(candidates)} candidate orientations failed; "
@@ -1969,9 +1942,6 @@ class GeminiPickPlaceExecutor(Node):
         self.arm_component.set_goal_state(motion_plan_constraints=[fallback])
         if self.plan_and_execute(self.arm_component, arm_name, label):
             self.get_logger().info(f"[{label}] position-only fallback succeeded")
-            # No specific orientation executed — corrections must not lock
-            # onto a stale index from an earlier motion.
-            self._last_executed_orient_idx = None
             return True
         self.get_logger().error(
             f"[{label}] IK + position-only fallback both failed"
@@ -3485,6 +3455,13 @@ class GeminiPickPlaceExecutor(Node):
                     f"(param {table_z:.3f}); using the measurement"
                 )
             table_z = measured_bed
+            # Remember the TRUE bed surface for the printer-bed collision
+            # slab. table_z elsewhere resolves to the OBJECT'S bottom,
+            # which sits ~4-9 mm above the bed — a slab anchored there
+            # occupies exactly the space the fingers need and vetoes every
+            # grasp orientation (observed: arm_link5 vs printer_bed contact
+            # at all 5 pick attempts).
+            self._last_bed_probe_z = measured_bed
         elif probe is not None:
             self.get_logger().warn(
                 f"plane ranging: bed probe z={float(probe.point.z):.3f} "
@@ -3827,7 +3804,17 @@ class GeminiPickPlaceExecutor(Node):
         depth = float(self.get_parameter("bed_collision_depth_m").value)
         thickness = float(self.get_parameter("bed_collision_thickness_m").value)
         clearance = float(self.get_parameter("bed_collision_clearance_m").value)
-        top_z = float(table_z) - clearance
+        # Anchor to the TRUE bed surface (per-perception depth probe), not
+        # table_z: table_z resolves to the OBJECT'S bottom, a few mm above
+        # the bed — a slab there occupies the space the fingers must reach
+        # and vetoes every grasp orientation.
+        if self._last_bed_probe_z is not None:
+            surface_z = float(self._last_bed_probe_z)
+            z_src = "bed_probe"
+        else:
+            surface_z = float(table_z)
+            z_src = "table_z"
+        top_z = surface_z - clearance
 
         obj = CollisionObject()
         obj.header.frame_id = "base_footprint"
@@ -3850,7 +3837,7 @@ class GeminiPickPlaceExecutor(Node):
         self.get_logger().info(
             f"[{label}] printer bed collision slab: front x={bed_front_x:.3f} "
             f"(wall {wall_x:.3f} [{wall_src}] + offset), top z={top_z:.3f} "
-            f"(table_z {float(table_z):.3f} - clearance {clearance:.3f}), "
+            f"({z_src} {surface_z:.3f} - clearance {clearance:.3f}), "
             f"{depth:.2f}x{2.0 * halfwidth:.2f}x{thickness:.2f} m"
         )
 
