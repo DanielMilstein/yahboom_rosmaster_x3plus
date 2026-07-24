@@ -341,6 +341,20 @@ class GeminiPickPlaceExecutor(Node):
         # 0.119 m (length 0.300, x offset -0.031) + bumper slack.
         self.declare_parameter("chassis_front_x_m", 0.13)
         self.declare_parameter("wall_stop_clearance_m", 0.03)
+        # Best-effort placement toward a container beyond the arm's reach
+        # (it must sit past the wall to be camera-visible over it, but the
+        # wall gate stops the base short): keep vision's y, clamp x into
+        # [wall + place_wall_clear_m, forward budget + place_max_reach_x_m]
+        # — the cube always drops past the wall, never inside the
+        # enclosure, and as far toward the container as feasible.
+        self.declare_parameter("place_wall_aim", False)
+        # Fingertip forward reach (from post-drive base_footprint) the
+        # place IK reliably solves at lift height; the last successful
+        # place executed at 0.358, picks solve at ~0.40.
+        self.declare_parameter("place_max_reach_x_m", 0.38)
+        # Cube-center minimum distance past the wall face when dropping
+        # (wall thickness + cube half-depth + margin).
+        self.declare_parameter("place_wall_clear_m", 0.06)
         # Reject IK solutions with positioning joints (1-4) within this
         # margin of the +-1.5708 servo range ends — proprioception lies
         # there (folded-elbow picks missed 4-12cm short with clean
@@ -3994,6 +4008,55 @@ class GeminiPickPlaceExecutor(Node):
         ]
         return self._run_step_sequence(steps)
 
+    def _apply_place_wall_aim(self, destination_point):
+        """Best-effort placement toward a container the arm cannot fully
+        reach: the container must sit far enough past the front wall to be
+        visible over it, but the wall gate stops the base short — so the
+        vision destination x is often beyond any feasible drive+reach and
+        the place search dies with 'no feasible base offset'. Keep vision's
+        y (aim at the container laterally) and clamp x into
+        [wall + place_wall_clear_m, forward-drive-budget + place_max_reach]:
+        the cube always drops PAST the wall (never inside the enclosure)
+        and as far toward the container as the arm can actually get."""
+        if not bool(self.get_parameter("place_wall_aim").value):
+            return
+        fit = self._fit_front_wall_x()
+        wall_x = fit[0] if fit is not None else self._wall_x_est
+        if wall_x is None:
+            self.get_logger().warn(
+                "place wall aim: no wall knowledge (live or dead-reckoned); "
+                "leaving the vision destination as-is"
+            )
+            return
+        stop = (
+            float(self.get_parameter("chassis_front_x_m").value)
+            + float(self.get_parameter("wall_stop_clearance_m").value)
+        )
+        reach = float(self.get_parameter("place_max_reach_x_m").value)
+        clear = float(self.get_parameter("place_wall_clear_m").value)
+        # Forward budget: the base may advance until the wall sits at the
+        # chassis stop distance; the fingertip then reaches `reach` beyond
+        # the post-drive base origin.
+        max_x = (float(wall_x) - stop) + reach
+        min_x = float(wall_x) + clear
+        old_x = float(destination_point.point.x)
+        if min_x > max_x:
+            new_x = max_x
+            self.get_logger().warn(
+                f"place wall aim: cannot clear the wall (min {min_x:.3f} > "
+                f"max reachable {max_x:.3f}); placing at max reach"
+            )
+        else:
+            new_x = max(min(old_x, max_x), min_x)
+        if abs(new_x - old_x) > 0.005:
+            self.get_logger().info(
+                f"place wall aim: destination x {old_x:.3f} -> {new_x:.3f} "
+                f"(wall_x={float(wall_x):.3f}, reach cap {max_x:.3f}, "
+                f"past-wall min {min_x:.3f}); y kept at "
+                f"{float(destination_point.point.y):.3f}"
+            )
+            destination_point.point.x = new_x
+
     def _run_place_phase(self, destination_point):
         open_name = str(self.get_parameter("gripper_open_named").value)
         place_lift = float(self.get_parameter("place_lift_m").value)
@@ -4007,6 +4070,7 @@ class GeminiPickPlaceExecutor(Node):
             # drives or it goes stale (and can land inside the robot).
             ("06b_drive_to_destination",
              lambda: (
+                 self._apply_place_wall_aim(destination_point),
                  self._remove_scene_collision_boxes(
                      "06b_drive_to_destination", "base about to drive"
                  ),
@@ -4015,7 +4079,7 @@ class GeminiPickPlaceExecutor(Node):
                      [place_lift, 0.0],
                      "06b_drive_to_destination",
                  ),
-             )[1]),
+             )[2]),
             ("07_pre_place",
              lambda: self.plan_and_execute_pose(
                  self.top_down_pose(destination_point, place_lift), "07_pre_place")),

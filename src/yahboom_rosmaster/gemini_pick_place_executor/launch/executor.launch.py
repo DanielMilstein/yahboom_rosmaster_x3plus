@@ -69,6 +69,12 @@ FORWARDED_PARAMS = [
     ("wall_drive_gate", "false"),
     ("chassis_front_x_m", "0.13"),
     ("wall_stop_clearance_m", "0.03"),
+    # Best-effort place at a container beyond reach (visible only past the
+    # wall): keep vision y, clamp x to [wall+clear, drive budget+reach].
+    # Hardware passes place_wall_aim:=true.
+    ("place_wall_aim", "false"),
+    ("place_max_reach_x_m", "0.38"),
+    ("place_wall_clear_m", "0.06"),
     ("joint_limit_margin_rad", "0.15"),
     # Camera-vs-lidar wall cross-check (front_wall field of the MAIN
     # Gemini plan — same image, no extra call): logs delta(cam-lidar) of
