@@ -3917,17 +3917,42 @@ class GeminiPickPlaceExecutor(Node):
             descent -= float(object_height_m) * fraction
         return descent
 
+    def _pick_floor_z(self, table_z):
+        """Lowest allowed pick-fingertip z. Base floor = surface + safety.
+        When the bed slab is active, additionally stay a MESH-depth above
+        the slab top: the fingertip is a frame point at the very tips, but
+        arm_link5's collision mesh (finger thickness, servo body) extends
+        ~2 cm below it in grasp orientations — goals 10 mm above the slab
+        top were vetoed as in-collision while >=17 mm planned fine. Used by
+        both the initial descent clamp and the droop-correction min_z so
+        the two floors can never disagree."""
+        safety = float(self.get_parameter("pick_z_safety_m").value)
+        floor = float(table_z) + safety
+        if bool(self.get_parameter("bed_collision").value):
+            clearance = float(
+                self.get_parameter("bed_collision_clearance_m").value
+            )
+            mesh_floor = float(table_z) - clearance + 0.02
+            if mesh_floor > floor:
+                self.get_logger().info(
+                    f"pick floor raised {floor:.3f} -> {mesh_floor:.3f}: "
+                    "the gripper mesh extends ~2 cm below the fingertip "
+                    "and must clear the bed slab top"
+                )
+                floor = mesh_floor
+        return floor
+
     def _clamp_grasp_descent(self, target_point, object_height_m, table_z):
         """Compute the pick offset relative to target.z (the object's
         perceived top): the height-scaled auto-descent plus grasp_z_offset_m,
         from _grasp_descent_nominal. The floor clamp can still raise this when
-        the resulting pick_z dips below table_z + safety_margin. Returns the
-        descent value (added to target.z; negative = below the perceived
-        surface); logs the clamp when triggered.
+        the resulting pick_z dips below the pick floor (_pick_floor_z).
+        Returns the descent value (added to target.z; negative = below the
+        perceived surface); logs the clamp when triggered.
         """
         grasp_descent = self._grasp_descent_nominal(object_height_m)
         safety = float(self.get_parameter("pick_z_safety_m").value)
-        pick_z_min = float(table_z) + safety
+        pick_z_min = self._pick_floor_z(table_z)
         pick_z_unclamped = float(target_point.point.z) + grasp_descent
         if pick_z_unclamped < pick_z_min:
             new_descent = pick_z_min - float(target_point.point.z)
@@ -4002,8 +4027,7 @@ class GeminiPickPlaceExecutor(Node):
             ("04_pick",
              lambda: self.plan_and_execute_pose(
                  self.top_down_pose(pick_target, grasp_descent), "04_pick",
-                 min_z=float(table_z)
-                 + float(self.get_parameter("pick_z_safety_m").value))),
+                 min_z=self._pick_floor_z(table_z))),
             ("05_close_gripper",
              lambda: self._close_gripper_until_contact(
                  "05_close_gripper", expected_grip=grip_value)),
