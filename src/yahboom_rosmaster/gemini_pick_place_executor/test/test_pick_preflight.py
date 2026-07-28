@@ -198,17 +198,20 @@ class PickPreflightTests(unittest.TestCase):
 
 
 class ExecutorSourceRegressionTests(unittest.TestCase):
-    def test_pose_loop_does_not_return_the_first_plan_attempt_directly(self):
+    def _method(self, name):
         executor_path = (
             SCRIPTS_DIR / "gemini_pick_place_executor.py"
         )
         tree = ast.parse(executor_path.read_text(encoding="utf-8"))
-        method = next(
+        return next(
             node
             for node in ast.walk(tree)
             if isinstance(node, ast.FunctionDef)
-            and node.name == "_plan_and_execute_pose_once"
+            and node.name == name
         )
+
+    def test_pose_loop_does_not_return_the_first_plan_attempt_directly(self):
+        method = self._method("_plan_and_execute_pose_once")
         direct_plan_returns = [
             node
             for node in ast.walk(method)
@@ -219,6 +222,45 @@ class ExecutorSourceRegressionTests(unittest.TestCase):
         ]
 
         self.assertEqual(direct_plan_returns, [])
+
+    def test_collision_preflight_models_the_open_gripper(self):
+        method = self._method("_candidate_is_collision_free")
+        open_gripper_assignments = [
+            node
+            for node in ast.walk(method)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "set_variable_position"
+            and len(node.args) >= 2
+            and isinstance(node.args[0], ast.Constant)
+            and node.args[0].value == "grip_joint"
+        ]
+
+        self.assertNotEqual(open_gripper_assignments, [])
+
+    def test_real_bed_is_applied_synchronously_for_final_planning(self):
+        method = self._method("_publish_printer_bed_collision")
+        called_attributes = {
+            node.func.attr
+            for node in ast.walk(method)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+        }
+
+        self.assertIn("read_write", called_attributes)
+        self.assertIn("apply_collision_object", called_attributes)
+
+    def test_collision_box_removal_updates_the_local_scene_synchronously(self):
+        method = self._method("_remove_collision_box")
+        called_attributes = {
+            node.func.attr
+            for node in ast.walk(method)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+        }
+
+        self.assertIn("read_write", called_attributes)
+        self.assertIn("apply_collision_object", called_attributes)
 
 
 if __name__ == "__main__":

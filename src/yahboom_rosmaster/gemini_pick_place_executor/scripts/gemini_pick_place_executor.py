@@ -1790,12 +1790,11 @@ class GeminiPickPlaceExecutor(Node):
         far-forward grasp branch it misses when seeded only from 'up'.
 
         check_collision=False skips the planning-scene query (state_is_collision_free).
-        The base search calls it that way: it only needs reachability, the
-        per-candidate collision query is the main source of moveit_py's
-        planning-scene-monitor concurrency segfault, and plan_and_execute
-        re-checks collision at the actual grasp poses. (On hardware the
-        tabletop/octomap are disabled, so the search-time check only caught
-        self-collisions anyway.)"""
+        The full base grid calls it that way: it only needs reachability and
+        per-grid planning-scene queries caused MoveItPy monitor concurrency
+        crashes. The small ordered shortlist is collision-checked serially
+        afterward, then checked again after the physical drive; OMPL performs
+        the final path check against the synchronously installed bed slab."""
         from moveit.core.robot_state import RobotState
         # Joint solutions cached from the last feasibility search solve the
         # executed pick/pre-pick poses (same targets) in one fast seeded
@@ -4079,6 +4078,16 @@ class GeminiPickPlaceExecutor(Node):
         obj.header.stamp = self.get_clock().now().to_msg()
         obj.id = obj_id
         obj.operation = CollisionObject.REMOVE
+        if self.moveit is not None:
+            try:
+                psm = self.moveit.get_planning_scene_monitor()
+                with psm.read_write() as scene:
+                    scene.apply_collision_object(obj)
+            except Exception as exc:  # noqa: BLE001
+                self.get_logger().warn(
+                    f"[{label}] local collision-object removal for "
+                    f"'{obj_id}' failed; publishing removal anyway: {exc}"
+                )
         self.collision_pub.publish(obj)
         self.get_logger().warn(
             f"[{label}] collision object '{obj_id}' removed: {reason}"
@@ -4259,6 +4268,13 @@ class GeminiPickPlaceExecutor(Node):
                 state.set_joint_group_positions(
                     arm_name, list(joint_values)
                 )
+                # Pre-pick and pick both occur with the jaws open. A fresh
+                # RobotState otherwise leaves grip_joint at its default
+                # closed value and can miss finger/bed collisions that the
+                # real open gripper would create.
+                state.set_variable_position(
+                    "grip_joint", GRIP_JOINT_AT_OPEN
+                )
                 state.update()
                 states.append(state)
 
@@ -4322,10 +4338,10 @@ class GeminiPickPlaceExecutor(Node):
             return False
 
     def _publish_printer_bed_collision(self, label, table_z):
-        """Publish the real bed slab used by final MoveIt planning."""
+        """Synchronously install and publish the real final-planning slab."""
 
         if not bool(self.get_parameter("bed_collision").value):
-            return
+            return True
         anchor = self._resolve_bed_anchor(table_z)
         if anchor is None:
             self._remove_collision_box(
@@ -4334,9 +4350,23 @@ class GeminiPickPlaceExecutor(Node):
                 "no lidar wall fit (live or dead-reckoned) to anchor the "
                 "bed slab this attempt",
             )
-            return
+            return False
         wall_x, surface_z, wall_src, z_src = anchor
         obj = self._printer_bed_collision_object(wall_x, surface_z)
+        try:
+            if self.moveit is None:
+                raise RuntimeError("MoveItPy is unavailable")
+            psm = self.moveit.get_planning_scene_monitor()
+            with psm.read_write() as scene:
+                scene.apply_collision_object(obj)
+        except Exception as exc:  # noqa: BLE001
+            self.get_logger().error(
+                f"[{label}] could not synchronously install printer-bed "
+                f"collision slab; failing closed: {exc}"
+            )
+            return False
+        # Keep other scene consumers synchronized too. The local planner
+        # already has the exact slab from the write-locked apply above.
         self.collision_pub.publish(obj)
         bed_front_x = (
             wall_x + float(self.get_parameter("bed_offset_x_m").value)
@@ -4358,6 +4388,7 @@ class GeminiPickPlaceExecutor(Node):
             f"({z_src} {surface_z:.3f} - clearance {clearance:.3f}), "
             f"{depth:.2f}x{2.0 * halfwidth:.2f}x{thickness:.2f} m"
         )
+        return True
 
     def _resolve_table_z(self, measured_z_bottom):
         """Table height used as the pick-fingertip safety floor. With
@@ -4489,7 +4520,14 @@ class GeminiPickPlaceExecutor(Node):
         pick_lift = float(self.get_parameter("pick_lift_m").value)
         verify_show_pose = str(self.get_parameter("verify_show_pose_named").value)
         self._publish_front_wall_collision("pick_prep")
-        self._publish_printer_bed_collision("pick_prep", table_z)
+        if not self._publish_printer_bed_collision(
+            "pick_prep", table_z
+        ):
+            self.get_logger().error(
+                "pick safety gate closed: final printer-bed collision "
+                "slab is unavailable; refusing to start 01_home"
+            )
+            return False
         grasp_descent = self._clamp_grasp_descent(
             target_point, object_height_m, table_z
         )
