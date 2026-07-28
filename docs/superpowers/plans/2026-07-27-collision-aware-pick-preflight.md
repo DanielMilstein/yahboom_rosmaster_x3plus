@@ -303,7 +303,8 @@ IK solving, but:
 
 - change the docstring and logs from “feasible” to “IK-reachable”;
 - store each all-lifts IK result as an `IKCandidate`;
-- keep searching until the configured shortlist size is reached;
+- keep searching until the configured number of IK-reachable base offsets is
+  reached, retaining every orientation at those offsets;
 - do not query the planning scene while collecting candidates;
 - do not write `_preferred_orient_idx` or `_search_seed_joints` until a
   collision-validated candidate is selected;

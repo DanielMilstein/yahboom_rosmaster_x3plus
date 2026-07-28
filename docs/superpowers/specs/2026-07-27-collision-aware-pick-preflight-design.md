@@ -59,16 +59,19 @@ The search must use the final grasp descent returned by
 pick pose identical to the one the executor will request.
 
 The search will gather a small ordered shortlist rather than querying the
-planning scene throughout the entire grid. The shortlist size will be a
-parameter with a conservative default of five candidates.
+planning scene throughout the entire grid. To ensure a colliding orientation
+or base pose cannot consume the whole shortlist, the parameter counts distinct
+base offsets and retains every IK-reachable orientation at each. Its
+conservative default is five base offsets.
 
 ### Stage 2: Serialized collision preflight
 
 Validate shortlisted candidates one at a time:
 
-1. Place a temporary printer-bed slab at the position it would occupy after
-   the candidate base displacement.
-2. Wait for the MoveIt planning scene to observe that exact slab revision.
+1. Under a MoveIt planning-scene write lock, place a temporary printer-bed slab
+   at the position it would occupy after the candidate base displacement.
+2. Query the same locked scene, which makes that exact slab revision visible
+   synchronously without a topic wait.
 3. Collision-check the candidate's pre-pick and pick joint states against the
    same planning scene, using the same arm group used during execution.
 4. Accept the first candidate for which both states are collision-free.
