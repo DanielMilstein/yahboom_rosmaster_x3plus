@@ -12,6 +12,7 @@ from pick_preflight import (  # noqa: E402
     apply_drive_delta_xy,
     choose_collision_validated_candidates,
     complete_drive_delta,
+    ordered_shortlist,
     run_orientation_attempts,
 )
 
@@ -65,6 +66,28 @@ class PickPreflightTests(unittest.TestCase):
 
         self.assertEqual(accepted, [second])
         self.assertEqual(rejected, 1)
+
+    def test_shortlist_preserves_offset_orientation_order_and_solutions(self):
+        candidates = [
+            IKCandidate(0.24, 0.0, 0, ("a0", "a1"), (0.255, 0.195)),
+            IKCandidate(0.24, 0.0, 2, ("b0", "b1"), (0.255, 0.195)),
+            IKCandidate(0.27, 0.0, 1, ("c0", "c1"), (0.255, 0.195)),
+        ]
+
+        shortlisted = ordered_shortlist(candidates, 2)
+
+        self.assertEqual(shortlisted, candidates[:2])
+        self.assertEqual(shortlisted[1].orientation_index, 2)
+        self.assertEqual(shortlisted[1].joint_solutions, ("b0", "b1"))
+        self.assertEqual(shortlisted[1].fingertip_zs, (0.255, 0.195))
+
+    def test_shortlist_limit_is_clamped_to_one(self):
+        candidates = [
+            IKCandidate(0.24, 0.0, 0, ("a0", "a1"), (0.255, 0.195)),
+            IKCandidate(0.27, 0.0, 1, ("b0", "b1"), (0.255, 0.195)),
+        ]
+
+        self.assertEqual(ordered_shortlist(candidates, 0), candidates[:1])
 
     def test_later_base_offset_is_kept_when_first_offset_collides(self):
         candidates = [

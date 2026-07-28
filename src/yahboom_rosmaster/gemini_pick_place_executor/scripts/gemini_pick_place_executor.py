@@ -32,7 +32,12 @@ from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
 from yahboom_rosmaster_msgs.srv import GeminiPickPlace, GeminiVerifyPick
 
-from pick_preflight import apply_drive_delta_xy, complete_drive_delta
+from pick_preflight import (
+    IKCandidate,
+    apply_drive_delta_xy,
+    complete_drive_delta,
+    ordered_shortlist,
+)
 
 
 def normalized_point_to_pixel(point, width, height):
@@ -252,6 +257,9 @@ class GeminiPickPlaceExecutor(Node):
         # target ends closest to the arm column (grasp mid-envelope, least
         # servo droop); "min_drive" is the legacy smallest-base-motion-first.
         self.declare_parameter("base_search_order", "min_reach")
+        # Number of ordered IK-reachable pick candidates retained for the
+        # serialized printer-bed collision preflight.
+        self.declare_parameter("collision_preflight_candidates", 5)
         # Horizontal distance from the arm column where the grasp is most
         # comfortable (mid-envelope). min_reach ordering aims the drive here.
         self.declare_parameter("base_search_ideal_reach_m", 0.33)
@@ -923,7 +931,9 @@ class GeminiPickPlaceExecutor(Node):
             # pre-pick at target.z + lift.
             corrected_pick_lifts = [
                 pick_lift,
-                self._grasp_descent_nominal(object_height),
+                self._clamp_grasp_descent(
+                    target_point, object_height, table_z
+                ),
             ]
             drive_result2 = self.drive_to_feasible(
                 target_point,
@@ -2236,18 +2246,22 @@ class GeminiPickPlaceExecutor(Node):
         return False
 
     def find_feasible_drive_for_point(
-        self, point, lift_zs, max_dx=None, engage_last_lift=False
+        self, point, lift_zs, max_dx=None, engage_last_lift=False,
+        candidate_limit=1,
     ):
-        """Search candidate base displacements (dx, dy) for one where arm IK is
-        feasible AND collision-free at every fingertip target
+        """Search base displacements for ordered IK-reachable candidates.
+
+        Every returned candidate has an IK solution at every fingertip target
         (point.x, point.y, point.z + lift) for each lift in `lift_zs`.
+        This method intentionally does not query the planning scene; protected
+        pick candidates are collision-checked serially after this grid search.
 
         Accepts a scalar or iterable for backwards compatibility. The same
         orientation index must work at *all* requested lifts, so a single
         approach path can be planned through them.
 
-        Returns (dx, dy, orientation_idx) of the smallest-norm displacement
-        that succeeds, or None if no candidate in the search range works.
+        Returns an ordered list of up to `candidate_limit` IKCandidate values,
+        or an empty list if no candidate in the search range works.
         """
         try:
             lifts = [float(v) for v in lift_zs]
@@ -2358,7 +2372,7 @@ class GeminiPickPlaceExecutor(Node):
                 + 1.5 * abs(ty - d[1]),
                 d[0] * d[0] + d[1] * d[1],
             )
-        candidates = sorted(
+        drive_offsets = sorted(
             ((dx, dy) for dx in dx_values for dy in dy_values), key=key
         )
 
@@ -2380,10 +2394,11 @@ class GeminiPickPlaceExecutor(Node):
             engage = float(self.get_parameter("grasp_engage_depth_m").value)
 
         ik_fails = 0
-        collision_fails = 0
-        total_candidates = len(candidates)
+        shortlist_limit = max(1, int(candidate_limit))
+        ik_candidates = []
+        total_candidates = len(drive_offsets)
         progress_every = max(1, total_candidates // 20)  # ~20 updates total
-        for cand_idx, (dx, dy) in enumerate(candidates):
+        for cand_idx, (dx, dy) in enumerate(drive_offsets):
             if cand_idx % progress_every == 0:
                 pct = int(100 * cand_idx / total_candidates) if total_candidates else 100
                 bar = "#" * (pct // 5) + "-" * (20 - pct // 5)
@@ -2434,32 +2449,40 @@ class GeminiPickPlaceExecutor(Node):
                             float(v) for v in
                             state.get_joint_group_positions(arm_name)
                         ))
-                    except Exception:  # noqa: BLE001
-                        pass
+                    except Exception as exc:  # noqa: BLE001
+                        self.get_logger().warn(
+                            "find_feasible_drive: could not cache IK joint "
+                            f"solution for orientation #{orient_idx}: {exc}"
+                        )
+                        all_lifts_ok = False
+                        break
                 if all_lifts_ok:
+                    candidate = IKCandidate(
+                        dx=float(dx),
+                        dy=float(dy),
+                        orientation_index=int(orient_idx),
+                        joint_solutions=tuple(solutions),
+                        fingertip_zs=tuple(z_world + lift for lift in lifts),
+                    )
+                    ik_candidates.append(candidate)
                     self.get_logger().info(
-                        f"find_feasible_drive: feasible at dx={dx:.3f} dy={dy:.3f} "
-                        f"orient #{orient_idx} after {cand_idx + 1} candidates "
+                        f"find_feasible_drive: IK-reachable candidate "
+                        f"dx={dx:.3f} dy={dy:.3f} orient #{orient_idx} "
+                        f"after {cand_idx + 1} base offsets "
                         f"(lifts={[round(l, 3) for l in lifts]}, "
                         f"engage_last={engage:.3f})"
                     )
-                    # Remember which orientation the search validated so the
-                    # pick-time candidate loop tries it FIRST — each failed
-                    # candidate there costs ik_timeout_sec x len(_IK_SEEDS).
-                    self._preferred_orient_idx = orient_idx
-                    # And cache the joint solutions: the pick/pre-pick
-                    # targets are these exact poses (post-drive), so seeding
-                    # IK with them solves in one fast call instead of
-                    # re-deriving what the search already proved.
-                    self._search_seed_joints = tuple(solutions)
-                    return dx, dy, orient_idx
+                    if len(ik_candidates) >= shortlist_limit:
+                        return ordered_shortlist(
+                            ik_candidates, shortlist_limit
+                        )
         self.get_logger().warn(
-            f"find_feasible_drive: no feasible offset in {len(candidates)} candidates "
+            f"find_feasible_drive: found {len(ik_candidates)} IK-reachable "
+            f"candidates in {len(drive_offsets)} base offsets "
             f"(point=({fx_world:.3f},{fy_world:.3f},{z_world:.3f}), "
-            f"lifts={[round(l, 3) for l in lifts]}; "
-            f"rejections: ik={ik_fails} collision={collision_fails})"
+            f"lifts={[round(l, 3) for l in lifts]}; IK failures={ik_fails})"
         )
-        return None
+        return ordered_shortlist(ik_candidates, shortlist_limit)
 
     def _lidar_scan_points(self):
         """Latest lidar scan as base-frame xy points (polar->xy plus the
@@ -2688,18 +2711,44 @@ class GeminiPickPlaceExecutor(Node):
         self, point, lift_z, label, max_dx=None, engage_last_lift=False
     ):
         # Accept a scalar or an iterable of lifts; the search requires all
-        # requested lifts to be feasible & collision-free at the same orientation.
-        result = self.find_feasible_drive_for_point(
-            point, lift_z, max_dx=max_dx, engage_last_lift=engage_last_lift
+        # requested lifts to be IK-reachable at the same orientation.
+        protected_pick = (
+            engage_last_lift
+            and bool(self.get_parameter("bed_collision").value)
         )
-        if result is None:
+        candidate_limit = (
+            max(
+                1,
+                int(
+                    self.get_parameter(
+                        "collision_preflight_candidates"
+                    ).value
+                ),
+            )
+            if protected_pick
+            else 1
+        )
+        candidates = self.find_feasible_drive_for_point(
+            point,
+            lift_z,
+            max_dx=max_dx,
+            engage_last_lift=engage_last_lift,
+            candidate_limit=candidate_limit,
+        )
+        if not candidates:
             self.get_logger().error(
-                f"[{label}] no feasible base offset found in search range"
+                f"[{label}] no IK-reachable base offset found in search range"
             )
             return None
-        dx, dy, orient_idx = result
+        candidate = candidates[0]
+        dx, dy = candidate.dx, candidate.dy
+        orient_idx = candidate.orientation_index
+        # Until protected-pick collision selection runs, unprotected paths
+        # retain the first IK-reachable candidate and its cached seeds.
+        self._preferred_orient_idx = orient_idx
+        self._search_seed_joints = candidate.joint_solutions
         self.get_logger().info(
-            f"[{label}] feasible base offset dx={dx:.3f} dy={dy:.3f} "
+            f"[{label}] IK-reachable base offset dx={dx:.3f} dy={dy:.3f} "
             f"(orientation #{orient_idx}); driving"
         )
         lidar_pts_before = self._lidar_scan_points()
@@ -4297,7 +4346,9 @@ class GeminiPickPlaceExecutor(Node):
             pick_lift = float(self.get_parameter("pick_lift_m").value)
             corrected_lifts = [
                 pick_lift,
-                self._grasp_descent_nominal(object_height),
+                self._clamp_grasp_descent(
+                    target_point, object_height, table_z
+                ),
             ]
             drive_result = self.drive_to_feasible(
                 target_point,

@@ -56,6 +56,12 @@ def complete_drive_delta(requested_dx, requested_dy, correction):
     )
 
 
+def ordered_shortlist(candidates, limit):
+    """Return at least one candidate while preserving the search order."""
+
+    return list(candidates[: max(1, int(limit))])
+
+
 def choose_collision_validated_candidates(candidates, validator):
     """Return safe candidates in order, rejecting validator errors closed."""
 
