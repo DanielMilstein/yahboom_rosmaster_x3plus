@@ -1,3 +1,4 @@
+import ast
 import sys
 import unittest
 from pathlib import Path
@@ -11,11 +12,13 @@ from pick_preflight import (  # noqa: E402
     IKCandidate,
     all_states_collision_free,
     apply_drive_delta_xy,
+    arm_motion_allowed,
     choose_collision_validated_candidates,
     complete_drive_delta,
     ordered_offset_shortlist,
     ordered_shortlist,
     run_orientation_attempts,
+    untried_candidates,
 )
 
 
@@ -165,6 +168,23 @@ class PickPreflightTests(unittest.TestCase):
             all_states_collision_free(["pre-pick", "pick"], unavailable)
         )
 
+    def test_arm_gate_opens_only_for_literal_post_drive_success(self):
+        self.assertTrue(arm_motion_allowed(True))
+        self.assertFalse(arm_motion_allowed(False))
+        self.assertFalse(arm_motion_allowed(None))
+        self.assertFalse(arm_motion_allowed(1))
+
+    def test_candidate_fallback_does_not_repeat_attempted_candidate(self):
+        candidates = [
+            IKCandidate(0.24, 0.0, 0, ("a0", "a1"), (0.255, 0.195)),
+            IKCandidate(0.24, 0.0, 2, ("b0", "b1"), (0.255, 0.195)),
+            IKCandidate(0.27, 0.0, 1, ("c0", "c1"), (0.255, 0.195)),
+        ]
+
+        remaining = untried_candidates(candidates, {candidates[0]})
+
+        self.assertEqual(remaining, candidates[1:])
+
     def test_planning_failure_after_ik_success_tries_next_orientation(self):
         attempted = []
 
@@ -175,6 +195,30 @@ class PickPreflightTests(unittest.TestCase):
 
         self.assertEqual(winner, 1)
         self.assertEqual(attempted, [0, 1])
+
+
+class ExecutorSourceRegressionTests(unittest.TestCase):
+    def test_pose_loop_does_not_return_the_first_plan_attempt_directly(self):
+        executor_path = (
+            SCRIPTS_DIR / "gemini_pick_place_executor.py"
+        )
+        tree = ast.parse(executor_path.read_text(encoding="utf-8"))
+        method = next(
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.FunctionDef)
+            and node.name == "_plan_and_execute_pose_once"
+        )
+        direct_plan_returns = [
+            node
+            for node in ast.walk(method)
+            if isinstance(node, ast.Return)
+            and isinstance(node.value, ast.Call)
+            and isinstance(node.value.func, ast.Attribute)
+            and node.value.func.attr == "plan_and_execute"
+        ]
+
+        self.assertEqual(direct_plan_returns, [])
 
 
 if __name__ == "__main__":

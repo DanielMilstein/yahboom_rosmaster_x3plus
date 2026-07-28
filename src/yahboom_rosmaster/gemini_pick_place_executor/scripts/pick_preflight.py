@@ -87,6 +87,22 @@ def all_states_collision_free(states, is_colliding):
         return False
 
 
+def arm_motion_allowed(post_drive_valid):
+    """Open the arm-motion gate only for an explicit successful validation."""
+
+    return post_drive_valid is True
+
+
+def untried_candidates(candidates, attempted):
+    """Return ordered candidates not present in the attempted set."""
+
+    return [
+        candidate
+        for candidate in candidates
+        if candidate not in attempted
+    ]
+
+
 def choose_collision_validated_candidates(candidates, validator):
     """Return safe candidates in order, rejecting validator errors closed."""
 
