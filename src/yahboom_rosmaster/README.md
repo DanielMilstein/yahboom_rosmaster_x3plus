@@ -15,16 +15,15 @@ Gemini, drive to the destination, place, and return to start.
 ```bash
 ros2 launch gemini_pick_place_executor executor.launch.py \
   execute:=true use_gazebo:=false use_sim_time:=false \
-  lidar_drive_correction:=true \
+  lidar_drive_correction:=true place_wall_aim:=true \
   task:="put the white cube in the grey container at the right of the 3d printer" \
   drive_axes:=xy drive_max_lin_speed_mps:=0.05 reperceive_after_drive:=true \
   plane_ranging:=true table_z_source:=perception table_z_m:=0.16 \
   wall_camera_check:=true wall_camera_autocal:=false \
-  print_y_m:=0.05 \
-  wall_drive_gate:=true bed_collision:=true place_wall_aim:=true \
-  grasp_z_offset_m:=0.016 pick_z_safety_m:=0.005 drive_timeout_sec:=15.0 \
-  grasp_tilt_first:=true grasp_roll_offset_rad:=0.0 \
-  verify_pick_with_gemini:=true \
+  print_y_m:=0.05 wall_drive_gate:=true joint_limit_margin_rad:=0.05 \
+  grasp_z_offset_m:=0.016 pick_z_safety_m:=0.015 drive_timeout_sec:=35.0 \
+  grasp_tilt_first:=true grasp_roll_offset_rad:=0.0 bed_collision_clearance_m:=0.012 \
+  verify_pick_with_gemini:=true bed_collision:=true \
   base_search_dx_range_m:="[0.0, 0.49]" base_search_dy_range_m:="[-0.15, 0.1]" \
   base_search_step_m:=0.03 ik_search_timeout_sec:=0.2
 ```
