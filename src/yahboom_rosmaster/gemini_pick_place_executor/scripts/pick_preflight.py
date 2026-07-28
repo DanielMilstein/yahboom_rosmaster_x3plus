@@ -9,18 +9,34 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class DriveDelta:
-    """Requested base translation plus any lidar-commanded correction."""
+    """Best estimate of one completed base translation."""
 
     requested_dx: float
     requested_dy: float
     correction_dx: float = 0.0
     correction_dy: float = 0.0
+    measured_dx: float = None
+    measured_dy: float = None
+
+    @property
+    def correction(self):
+        return float(self.correction_dx), float(self.correction_dy)
 
     @property
     def total(self):
+        base_dx = (
+            self.requested_dx
+            if self.measured_dx is None
+            else self.measured_dx
+        )
+        base_dy = (
+            self.requested_dy
+            if self.measured_dy is None
+            else self.measured_dy
+        )
         return (
-            float(self.requested_dx) + float(self.correction_dx),
-            float(self.requested_dy) + float(self.correction_dy),
+            float(base_dx) + float(self.correction_dx),
+            float(base_dy) + float(self.correction_dy),
         )
 
 
@@ -42,17 +58,27 @@ def apply_drive_delta_xy(x, y, delta):
     return float(x) - total_dx, float(y) - total_dy
 
 
-def complete_drive_delta(requested_dx, requested_dy, correction):
-    """Build a known total drive, or ``None`` if correction motion is unknown."""
+def complete_drive_delta(
+    requested_dx,
+    requested_dy,
+    correction,
+    measured=None,
+):
+    """Build a known drive estimate, or ``None`` after failed correction."""
 
     if correction is None:
         return None
     correction_dx, correction_dy = correction
+    measured_dx, measured_dy = (
+        (None, None) if measured is None else measured
+    )
     return DriveDelta(
         requested_dx,
         requested_dy,
         correction_dx,
         correction_dy,
+        measured_dx,
+        measured_dy,
     )
 
 

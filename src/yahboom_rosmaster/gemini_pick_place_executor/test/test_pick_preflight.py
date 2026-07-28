@@ -8,7 +8,6 @@ SCRIPTS_DIR = Path(__file__).resolve().parents[1] / "scripts"
 sys.path.insert(0, str(SCRIPTS_DIR))
 
 from pick_preflight import (  # noqa: E402
-    DriveDelta,
     IKCandidate,
     all_states_collision_free,
     apply_drive_delta_xy,
@@ -23,38 +22,43 @@ from pick_preflight import (  # noqa: E402
 
 
 class PickPreflightTests(unittest.TestCase):
-    def test_lidar_translation_is_part_of_total_drive(self):
-        delta = DriveDelta(0.24, 0.01, 0.013, -0.004)
+    def test_lidar_measurement_and_correction_define_total_drive(self):
+        delta = complete_drive_delta(
+            0.270,
+            0.0,
+            (0.016, 0.0),
+            measured=(0.248, 0.002),
+        )
 
-        total_dx, total_dy = delta.total
-        point_x, point_y = apply_drive_delta_xy(0.70, -0.02, delta)
+        self.assertAlmostEqual(delta.total[0], 0.264)
+        self.assertAlmostEqual(delta.total[1], 0.002)
 
-        self.assertAlmostEqual(total_dx, 0.253)
-        self.assertAlmostEqual(total_dy, 0.006)
-        self.assertAlmostEqual(point_x, 0.447)
-        self.assertAlmostEqual(point_y, -0.026)
-
-    def test_no_lidar_correction_keeps_requested_drive(self):
-        delta = complete_drive_delta(0.24, -0.01, (0.0, 0.0))
+    def test_missing_lidar_measurement_falls_back_to_requested_drive(self):
+        delta = complete_drive_delta(0.270, -0.01, (0.0, 0.0))
 
         self.assertIsNotNone(delta)
-        self.assertEqual(delta.total, (0.24, -0.01))
+        self.assertEqual(delta.total, (0.270, -0.01))
 
     def test_failed_lidar_correction_makes_drive_bookkeeping_unknown(self):
         delta = complete_drive_delta(0.24, 0.0, None)
 
         self.assertIsNone(delta)
 
-    def test_same_total_drive_updates_target_and_destination_once(self):
-        delta = complete_drive_delta(0.24, 0.0, (0.013, -0.004))
+    def test_same_measured_total_updates_scene_points_once(self):
+        delta = complete_drive_delta(
+            0.270,
+            0.0,
+            (0.016, -0.004),
+            measured=(0.248, 0.002),
+        )
 
-        target = apply_drive_delta_xy(0.70, -0.02, delta)
-        destination = apply_drive_delta_xy(0.91, 0.12, delta)
+        target = apply_drive_delta_xy(0.633, 0.011, delta)
+        destination = apply_drive_delta_xy(0.716, -0.313, delta)
 
-        self.assertAlmostEqual(target[0], 0.447)
-        self.assertAlmostEqual(target[1], -0.016)
-        self.assertAlmostEqual(destination[0], 0.657)
-        self.assertAlmostEqual(destination[1], 0.124)
+        self.assertAlmostEqual(target[0], 0.369)
+        self.assertAlmostEqual(target[1], 0.013)
+        self.assertAlmostEqual(destination[0], 0.452)
+        self.assertAlmostEqual(destination[1], -0.311)
 
     def test_colliding_candidate_is_rejected_for_later_orientation(self):
         first = IKCandidate(
@@ -222,6 +226,18 @@ class ExecutorSourceRegressionTests(unittest.TestCase):
         ]
 
         self.assertEqual(direct_plan_returns, [])
+
+    def test_lidar_audit_returns_completed_drive_delta(self):
+        method = self._method("_lidar_audit_drive")
+        helper_calls = [
+            node
+            for node in ast.walk(method)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "complete_drive_delta"
+        ]
+
+        self.assertNotEqual(helper_calls, [])
 
     def test_collision_preflight_models_the_open_gripper(self):
         method = self._method("_candidate_is_collision_free")

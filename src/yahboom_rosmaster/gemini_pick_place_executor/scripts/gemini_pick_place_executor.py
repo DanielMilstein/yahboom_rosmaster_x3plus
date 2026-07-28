@@ -2629,22 +2629,28 @@ class GeminiPickPlaceExecutor(Node):
         the lidar scan match; log the mismatch, and (Phase B, gated) issue a
         follow-up drive covering the measured shortfall.
 
-        Returns the translation commanded by that follow-up drive. A failed
-        correction returns None because the resulting point frame is unknown.
+        Returns the completed drive estimate, using trusted measured motion
+        plus any correction. A failed correction returns None because the
+        resulting point frame is unknown.
         """
+        def odometry_delta():
+            return complete_drive_delta(
+                applied_dx, applied_dy, (0.0, 0.0)
+            )
+
         if pts_before is None:
-            return 0.0, 0.0
+            return odometry_delta()
         time.sleep(0.3)  # let a fresh post-drive scan arrive
         pts_after = self._lidar_scan_points()
         if pts_after is None:
-            return 0.0, 0.0
+            return odometry_delta()
         match = self._scan_match(pts_before, pts_after, applied_dx, applied_dy)
         if match is None:
             self.get_logger().warn(
                 f"[{label}] lidar audit: scan match unreliable "
                 "(too few correspondences); trusting odometry"
             )
-            return 0.0, 0.0
+            return odometry_delta()
         mdx, mdy, dyaw, rms, n_pairs = match
         ex, ey = mdx - applied_dx, mdy - applied_dy
         self.get_logger().info(
@@ -2653,9 +2659,16 @@ class GeminiPickPlaceExecutor(Node):
             f"dy={mdy:+.3f}, dyaw={math.degrees(dyaw):+.1f}°) | "
             f"mismatch ({ex:+.3f}, {ey:+.3f}) rms={rms:.3f} pairs={n_pairs}"
         )
-        if not bool(self.get_parameter("lidar_drive_correction").value):
-            return 0.0, 0.0
         confident = rms <= 0.035 and n_pairs >= 100
+        translation_confident = confident and abs(dyaw) <= 0.05
+        measured = (mdx, mdy) if translation_confident else None
+        if not bool(self.get_parameter("lidar_drive_correction").value):
+            return complete_drive_delta(
+                applied_dx,
+                applied_dy,
+                (0.0, 0.0),
+                measured=measured,
+            )
         # Heading first: the drive intended zero yaw change, so any measured
         # dyaw is real base twist. Rotating it out here keeps per-drive
         # twists from accumulating into a visibly rotated robot (and keeps
@@ -2674,18 +2687,23 @@ class GeminiPickPlaceExecutor(Node):
         cap = float(self.get_parameter("lidar_correction_max_m").value)
         err = math.hypot(ex, ey)
         if err <= tol:
-            return 0.0, 0.0
+            return complete_drive_delta(
+                applied_dx,
+                applied_dy,
+                (0.0, 0.0),
+                measured=measured,
+            )
         # Real-scene match quality: first hardware audits showed rms
         # 0.018-0.022 with ~280 pairs while measuring a consistent,
         # tape-plausible 1 cm odometry shortfall — so the gate sits above
         # that, not at the synthetic-scene ideal.
-        if rms > 0.035 or n_pairs < 100 or abs(dyaw) > 0.05:
+        if not translation_confident:
             self.get_logger().warn(
                 f"[{label}] lidar correction skipped: low-confidence match "
                 f"(rms={rms:.3f} pairs={n_pairs} "
                 f"dyaw={math.degrees(dyaw):+.1f}°)"
             )
-            return 0.0, 0.0
+            return odometry_delta()
         cx = max(-cap, min(cap, -ex))
         cy = max(-cap, min(cap, -ey))
         if cx > 0.0:
@@ -2709,7 +2727,12 @@ class GeminiPickPlaceExecutor(Node):
         elif axes_mode == "x_only":
             cy = 0.0
         if abs(cx) < 1e-6 and abs(cy) < 1e-6:
-            return 0.0, 0.0
+            return complete_drive_delta(
+                applied_dx,
+                applied_dy,
+                (0.0, 0.0),
+                measured=measured,
+            )
         self.get_logger().info(
             f"[{label}] lidar correction: driving ({cx:+.3f}, {cy:+.3f}) "
             "to cover the measured shortfall"
@@ -2720,7 +2743,12 @@ class GeminiPickPlaceExecutor(Node):
                 "coordinates are unknown"
             )
             return None
-        return cx, cy
+        return complete_drive_delta(
+            applied_dx,
+            applied_dy,
+            (cx, cy),
+            measured=measured,
+        )
 
     def drive_staging(self, point, dx, dy, label):
         """Drive a fixed base displacement with the same bookkeeping as
@@ -2750,15 +2778,15 @@ class GeminiPickPlaceExecutor(Node):
         lidar_pts_before = self._lidar_scan_points()
         if not self.drive_relative_base(dx, dy):
             return None
-        correction = self._lidar_audit_drive(
+        delta = self._lidar_audit_drive(
             lidar_pts_before, dx, dy, label
         )
-        delta = complete_drive_delta(dx, dy, correction)
         if delta is None:
             return None
         point.point.x, point.point.y = apply_drive_delta_xy(
             point.point.x, point.point.y, delta
         )
+        correction = delta.correction
         total_dx, total_dy = delta.total
         self.get_logger().info(
             f"[{label}] total base translation "
@@ -3010,22 +3038,22 @@ class GeminiPickPlaceExecutor(Node):
                     requested_dx, requested_dy
                 ):
                     return None
-                correction = self._lidar_audit_drive(
+                delta = self._lidar_audit_drive(
                     lidar_pts_before,
                     requested_dx,
                     requested_dy,
                     label,
                 )
             else:
-                correction = (0.0, 0.0)
-            delta = complete_drive_delta(
-                requested_dx, requested_dy, correction
-            )
+                delta = complete_drive_delta(
+                    requested_dx, requested_dy, (0.0, 0.0)
+                )
             if delta is None:
                 return None
             point.point.x, point.point.y = apply_drive_delta_xy(
                 point.point.x, point.point.y, delta
             )
+            correction = delta.correction
             moved_dx, moved_dy = delta.total
             total_dx += moved_dx
             total_dy += moved_dy
