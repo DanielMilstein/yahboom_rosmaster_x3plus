@@ -34,8 +34,11 @@ from yahboom_rosmaster_msgs.srv import GeminiPickPlace, GeminiVerifyPick
 
 from pick_preflight import (
     IKCandidate,
+    all_states_collision_free,
     apply_drive_delta_xy,
+    choose_collision_validated_candidates,
     complete_drive_delta,
+    ordered_offset_shortlist,
     ordered_shortlist,
 )
 
@@ -802,6 +805,7 @@ class GeminiPickPlaceExecutor(Node):
         initial_odom = None
         reperceive = bool(self.get_parameter("reperceive_after_drive").value)
         extent = None
+        initial_table_z = None
         if execute and drive_enabled:
             pick_lift = float(self.get_parameter("pick_lift_m").value)
             initial_odom = self.snapshot_odom()  # may be None in open-loop mode
@@ -812,22 +816,31 @@ class GeminiPickPlaceExecutor(Node):
                 # it. Measure the object NOW, from the valid pre-drive
                 # vantage, and dead-reckon positions through the drive.
                 extent = self.measure_object_extent(plan, image)
-            # Validate the base offset at BOTH the pre-pick height
-            # (target.z + pick_lift) and the actual deepest pick point
-            # (target.z + nominal descent). Validating only target.z used to
-            # let the base drive to a spot where the real, lower grasp was
-            # kinematically unreachable — the pick then failed all IK after
-            # a committed drive. The table-floor clamp only raises the pick,
-            # so the nominal descent point is the conservative lowest target.
-            height_guess = (
-                extent[1]
-                if extent is not None and extent[1] is not None and extent[1] > 0.0
-                else float(self.get_parameter("object_height_fallback_m").value)
-            )
-            initial_pick_lifts = [
-                pick_lift,
-                self._grasp_descent_nominal(height_guess),
-            ]
+                z_top, measured_height, measured_z_bottom = extent
+                if z_top is not None:
+                    target_point.point.z = z_top
+                height_guess = (
+                    measured_height
+                    if measured_height is not None
+                    and measured_height > 0.0
+                    else float(
+                        self.get_parameter(
+                            "object_height_fallback_m"
+                        ).value
+                    )
+                )
+                initial_table_z = self._resolve_table_z(
+                    measured_z_bottom
+                )
+                # This direct-to-pick approach must use the same final,
+                # floor-clamped depth and bed surface as execution. It is
+                # the only non-staging drive before the corrected check.
+                initial_pick_lifts = [
+                    pick_lift,
+                    self._clamp_grasp_descent(
+                        target_point, height_guess, initial_table_z
+                    ),
+                ]
             # With re-perception enabled, the first drive is a pure STAGING
             # move: stop while the target is still visible to the depth
             # camera (outside its ~0.6 m min-range blind zone) and centered
@@ -866,6 +879,7 @@ class GeminiPickPlaceExecutor(Node):
                     initial_pick_lifts,
                     "drive_to_reach_target",
                     engage_last_lift=True,
+                    collision_surface_z=initial_table_z,
                 )
             if not drive_result:
                 self.get_logger().error("base drive failed; aborting")
@@ -940,6 +954,7 @@ class GeminiPickPlaceExecutor(Node):
                 corrected_pick_lifts,
                 "drive_to_reach_target_corrected",
                 engage_last_lift=True,
+                collision_surface_z=table_z,
             )
             if not drive_result2:
                 self.get_logger().error(
@@ -2247,7 +2262,7 @@ class GeminiPickPlaceExecutor(Node):
 
     def find_feasible_drive_for_point(
         self, point, lift_zs, max_dx=None, engage_last_lift=False,
-        candidate_limit=1,
+        candidate_limit=1, group_by_offset=False,
     ):
         """Search base displacements for ordered IK-reachable candidates.
 
@@ -2260,8 +2275,10 @@ class GeminiPickPlaceExecutor(Node):
         orientation index must work at *all* requested lifts, so a single
         approach path can be planned through them.
 
-        Returns an ordered list of up to `candidate_limit` IKCandidate values,
-        or an empty list if no candidate in the search range works.
+        Returns an ordered list of IKCandidate values. For collision preflight,
+        `group_by_offset=True` retains every IK orientation at each of up to
+        `candidate_limit` distinct base offsets, so both later orientations
+        and later offsets remain available.
         """
         try:
             lifts = [float(v) for v in lift_zs]
@@ -2396,6 +2413,7 @@ class GeminiPickPlaceExecutor(Node):
         ik_fails = 0
         shortlist_limit = max(1, int(candidate_limit))
         ik_candidates = []
+        reachable_offset_count = 0
         total_candidates = len(drive_offsets)
         progress_every = max(1, total_candidates // 20)  # ~20 updates total
         for cand_idx, (dx, dy) in enumerate(drive_offsets):
@@ -2409,6 +2427,7 @@ class GeminiPickPlaceExecutor(Node):
             fx = fx_world - dx
             fy = fy_world - dy
             orientations = self.candidate_orientations(fx, fy)
+            offset_had_solution = False
             for orient_idx, (qx, qy, qz, qw) in enumerate(orientations):
                 ox, oy, oz = rotate_vector_by_quat(tip_offset, qx, qy, qz, qw)
                 # Require this orientation to be valid at every requested lift.
@@ -2465,6 +2484,7 @@ class GeminiPickPlaceExecutor(Node):
                         fingertip_zs=tuple(z_world + lift for lift in lifts),
                     )
                     ik_candidates.append(candidate)
+                    offset_had_solution = True
                     self.get_logger().info(
                         f"find_feasible_drive: IK-reachable candidate "
                         f"dx={dx:.3f} dy={dy:.3f} orient #{orient_idx} "
@@ -2472,16 +2492,29 @@ class GeminiPickPlaceExecutor(Node):
                         f"(lifts={[round(l, 3) for l in lifts]}, "
                         f"engage_last={engage:.3f})"
                     )
-                    if len(ik_candidates) >= shortlist_limit:
+                    if (
+                        not group_by_offset
+                        and len(ik_candidates) >= shortlist_limit
+                    ):
                         return ordered_shortlist(
                             ik_candidates, shortlist_limit
                         )
+            if group_by_offset and offset_had_solution:
+                reachable_offset_count += 1
+                if reachable_offset_count >= shortlist_limit:
+                    return ordered_offset_shortlist(
+                        ik_candidates, shortlist_limit
+                    )
         self.get_logger().warn(
             f"find_feasible_drive: found {len(ik_candidates)} IK-reachable "
             f"candidates in {len(drive_offsets)} base offsets "
             f"(point=({fx_world:.3f},{fy_world:.3f},{z_world:.3f}), "
             f"lifts={[round(l, 3) for l in lifts]}; IK failures={ik_fails})"
         )
+        if group_by_offset:
+            return ordered_offset_shortlist(
+                ik_candidates, shortlist_limit
+            )
         return ordered_shortlist(ik_candidates, shortlist_limit)
 
     def _lidar_scan_points(self):
@@ -2708,13 +2741,22 @@ class GeminiPickPlaceExecutor(Node):
         return total_dx, total_dy
 
     def drive_to_feasible(
-        self, point, lift_z, label, max_dx=None, engage_last_lift=False
+        self,
+        point,
+        lift_z,
+        label,
+        max_dx=None,
+        engage_last_lift=False,
+        collision_surface_z=None,
     ):
         # Accept a scalar or an iterable of lifts; the search requires all
         # requested lifts to be IK-reachable at the same orientation.
         protected_pick = (
             engage_last_lift
             and bool(self.get_parameter("bed_collision").value)
+        )
+        require_collision_preflight = (
+            protected_pick and collision_surface_z is not None
         )
         candidate_limit = (
             max(
@@ -2725,7 +2767,7 @@ class GeminiPickPlaceExecutor(Node):
                     ).value
                 ),
             )
-            if protected_pick
+            if require_collision_preflight
             else 1
         )
         candidates = self.find_feasible_drive_for_point(
@@ -2734,23 +2776,87 @@ class GeminiPickPlaceExecutor(Node):
             max_dx=max_dx,
             engage_last_lift=engage_last_lift,
             candidate_limit=candidate_limit,
+            group_by_offset=require_collision_preflight,
         )
         if not candidates:
             self.get_logger().error(
                 f"[{label}] no IK-reachable base offset found in search range"
             )
             return None
-        candidate = candidates[0]
+        if protected_pick and not require_collision_preflight:
+            self.get_logger().error(
+                f"[{label}] protected pick has no bed surface for collision "
+                "preflight; refusing to drive"
+            )
+            return None
+
+        if require_collision_preflight:
+            anchor = self._resolve_bed_anchor(collision_surface_z)
+            if anchor is None:
+                self.get_logger().error(
+                    f"[{label}] collision preflight cannot anchor the "
+                    "printer bed; refusing to drive"
+                )
+                return None
+            wall_x, surface_z, wall_src, z_src = anchor
+
+            def validate(candidate):
+                predicted_wall_x = wall_x - candidate.dx
+                safe = self._candidate_is_collision_free(
+                    candidate,
+                    predicted_wall_x,
+                    surface_z,
+                    label,
+                )
+                clearance = float(
+                    self.get_parameter(
+                        "bed_collision_clearance_m"
+                    ).value
+                )
+                outcome = "accepted" if safe else "rejected"
+                self.get_logger().info(
+                    f"[{label}] collision-preflight {outcome}: "
+                    f"dx={candidate.dx:.3f} dy={candidate.dy:.3f} "
+                    f"orientation #{candidate.orientation_index}, "
+                    f"fingertip_zs="
+                    f"{[round(z, 3) for z in candidate.fingertip_zs]}, "
+                    f"slab_top={surface_z - clearance:.3f} "
+                    f"(wall={predicted_wall_x:.3f} from {wall_src}, "
+                    f"surface={z_src})"
+                )
+                return safe
+
+            validated, rejected = choose_collision_validated_candidates(
+                candidates, validate
+            )
+            if not validated:
+                self.get_logger().error(
+                    f"[{label}] no collision-validated base offset "
+                    f"({len(candidates)} IK-reachable candidates, "
+                    f"{rejected} rejected); refusing to drive"
+                )
+                return None
+            self._pick_preflight_candidates = tuple(validated)
+            candidate = validated[0]
+        else:
+            self._pick_preflight_candidates = ()
+            candidate = candidates[0]
         dx, dy = candidate.dx, candidate.dy
         orient_idx = candidate.orientation_index
-        # Until protected-pick collision selection runs, unprotected paths
-        # retain the first IK-reachable candidate and its cached seeds.
         self._preferred_orient_idx = orient_idx
         self._search_seed_joints = candidate.joint_solutions
-        self.get_logger().info(
-            f"[{label}] IK-reachable base offset dx={dx:.3f} dy={dy:.3f} "
-            f"(orientation #{orient_idx}); driving"
-        )
+        if require_collision_preflight:
+            self.get_logger().info(
+                f"[{label}] collision-validated base offset "
+                f"dx={dx:.3f} dy={dy:.3f} "
+                f"(orientation #{orient_idx}); driving"
+            )
+        else:
+            self.get_logger().info(
+                f"[{label}] IK-reachable base offset "
+                f"dx={dx:.3f} dy={dy:.3f} "
+                f"(orientation #{orient_idx}); driving"
+            )
         lidar_pts_before = self._lidar_scan_points()
         if not self.drive_relative_base(dx, dy):
             return None
@@ -3874,17 +3980,9 @@ class GeminiPickPlaceExecutor(Node):
             f"({n_fit} scan points)"
         )
 
-    def _publish_printer_bed_collision(self, label, table_z):
-        """Publish the printer bed as a horizontal slab: front face at
-        wall_x + bed_offset_x_m (live lidar, same chain as the slicer x
-        reference), top at table_z - clearance. Planning then rejects
-        pick poses that dip the gripper servo or claws below the bed —
-        the two ways picks have physically crashed into it — and the
-        roll-twin candidates give planning a bed-clearing alternative to
-        fall through to. Re-fit per pick attempt; removed before drives
-        (base_footprint-fixed, goes stale like the wall box)."""
-        if not bool(self.get_parameter("bed_collision").value):
-            return
+    def _resolve_bed_anchor(self, table_z):
+        """Return the current wall and surface used to place the bed slab."""
+
         fit = self._fit_front_wall_x()
         if fit is not None:
             wall_x, n_fit = fit
@@ -3897,17 +3995,7 @@ class GeminiPickPlaceExecutor(Node):
             wall_x = float(self._wall_x_est)
             wall_src = "dead-reckoned wall"
         else:
-            self._remove_collision_box(
-                "printer_bed", label,
-                "no lidar wall fit (live or dead-reckoned) to anchor the "
-                "bed slab this attempt"
-            )
-            return
-        bed_front_x = wall_x + float(self.get_parameter("bed_offset_x_m").value)
-        halfwidth = float(self.get_parameter("bed_collision_halfwidth_m").value)
-        depth = float(self.get_parameter("bed_collision_depth_m").value)
-        thickness = float(self.get_parameter("bed_collision_thickness_m").value)
-        clearance = float(self.get_parameter("bed_collision_clearance_m").value)
+            return None
         # Anchor to the TRUE bed surface (per-perception depth probe), not
         # table_z: table_z resolves to the OBJECT'S bottom, a few mm above
         # the bed — a slab there occupies the space the fingers must reach
@@ -3918,12 +4006,40 @@ class GeminiPickPlaceExecutor(Node):
         else:
             surface_z = float(table_z)
             z_src = "table_z"
-        top_z = surface_z - clearance
+        return wall_x, surface_z, wall_src, z_src
+
+    def _printer_bed_collision_object(
+        self,
+        wall_x,
+        surface_z,
+        operation=CollisionObject.ADD,
+        object_id="printer_bed",
+    ):
+        """Build the one canonical printer-bed slab CollisionObject."""
 
         obj = CollisionObject()
         obj.header.frame_id = "base_footprint"
         obj.header.stamp = self.get_clock().now().to_msg()
-        obj.id = "printer_bed"
+        obj.id = object_id
+        obj.operation = operation
+        if operation == CollisionObject.REMOVE:
+            return obj
+
+        bed_front_x = (
+            float(wall_x)
+            + float(self.get_parameter("bed_offset_x_m").value)
+        )
+        halfwidth = float(
+            self.get_parameter("bed_collision_halfwidth_m").value
+        )
+        depth = float(self.get_parameter("bed_collision_depth_m").value)
+        thickness = float(
+            self.get_parameter("bed_collision_thickness_m").value
+        )
+        clearance = float(
+            self.get_parameter("bed_collision_clearance_m").value
+        )
+        top_z = float(surface_z) - clearance
         box = SolidPrimitive()
         box.type = SolidPrimitive.BOX
         box.dimensions = [depth, 2.0 * halfwidth, thickness]
@@ -3936,8 +4052,122 @@ class GeminiPickPlaceExecutor(Node):
         pose.orientation.w = 1.0
         obj.primitives = [box]
         obj.primitive_poses = [pose]
-        obj.operation = CollisionObject.ADD  # same id -> replaces in scene
+        return obj
+
+    def _candidate_is_collision_free(
+        self,
+        candidate,
+        wall_x,
+        surface_z,
+        label,
+    ):
+        """Fail-closed collision check against one exact temporary bed slab."""
+
+        if self.moveit is None:
+            self.get_logger().error(
+                f"[{label}] collision preflight has no MoveIt instance"
+            )
+            return False
+        if len(candidate.joint_solutions) != 2:
+            self.get_logger().error(
+                f"[{label}] collision preflight expected two IK states, "
+                f"got {len(candidate.joint_solutions)}"
+            )
+            return False
+
+        from moveit.core.robot_state import RobotState
+
+        arm_name = str(self.get_parameter("arm_group_name").value)
+        robot_model = self.moveit.get_robot_model()
+        states = []
+        try:
+            for joint_values in candidate.joint_solutions:
+                state = RobotState(robot_model)
+                state.set_joint_group_positions(
+                    arm_name, list(joint_values)
+                )
+                state.update()
+                states.append(state)
+
+            add_obj = self._printer_bed_collision_object(
+                wall_x,
+                surface_z,
+                operation=CollisionObject.ADD,
+                object_id="printer_bed_preflight",
+            )
+            remove_obj = self._printer_bed_collision_object(
+                wall_x,
+                surface_z,
+                operation=CollisionObject.REMOVE,
+                object_id="printer_bed_preflight",
+            )
+            psm = self.moveit.get_planning_scene_monitor()
+            query_errors = []
+            with psm.read_write() as scene:
+                try:
+                    scene.apply_collision_object(add_obj)
+
+                    def is_colliding(state):
+                        try:
+                            return scene.is_state_colliding(
+                                robot_state=state,
+                                joint_model_group_name=arm_name,
+                                verbose=False,
+                            )
+                        except Exception as exc:  # noqa: BLE001
+                            query_errors.append(exc)
+                            raise
+
+                    safe = all_states_collision_free(
+                        states, is_colliding
+                    )
+                finally:
+                    scene.apply_collision_object(remove_obj)
+            if query_errors:
+                self.get_logger().error(
+                    f"[{label}] collision preflight scene query failed: "
+                    f"{query_errors[0]}"
+                )
+                return False
+            return safe
+        except Exception as exc:  # noqa: BLE001
+            self.get_logger().error(
+                f"[{label}] collision preflight scene mutation/check "
+                f"failed closed: {exc}"
+            )
+            return False
+
+    def _publish_printer_bed_collision(self, label, table_z):
+        """Publish the real bed slab used by final MoveIt planning."""
+
+        if not bool(self.get_parameter("bed_collision").value):
+            return
+        anchor = self._resolve_bed_anchor(table_z)
+        if anchor is None:
+            self._remove_collision_box(
+                "printer_bed",
+                label,
+                "no lidar wall fit (live or dead-reckoned) to anchor the "
+                "bed slab this attempt",
+            )
+            return
+        wall_x, surface_z, wall_src, z_src = anchor
+        obj = self._printer_bed_collision_object(wall_x, surface_z)
         self.collision_pub.publish(obj)
+        bed_front_x = (
+            wall_x + float(self.get_parameter("bed_offset_x_m").value)
+        )
+        halfwidth = float(
+            self.get_parameter("bed_collision_halfwidth_m").value
+        )
+        depth = float(self.get_parameter("bed_collision_depth_m").value)
+        thickness = float(
+            self.get_parameter("bed_collision_thickness_m").value
+        )
+        clearance = float(
+            self.get_parameter("bed_collision_clearance_m").value
+        )
+        top_z = surface_z - clearance
         self.get_logger().info(
             f"[{label}] printer bed collision slab: front x={bed_front_x:.3f} "
             f"(wall {wall_x:.3f} [{wall_src}] + offset), top z={top_z:.3f} "
@@ -4355,6 +4585,7 @@ class GeminiPickPlaceExecutor(Node):
                 corrected_lifts,
                 "retry_drive_correction",
                 engage_last_lift=True,
+                collision_surface_z=table_z,
             )
             if not drive_result:
                 self.get_logger().error(

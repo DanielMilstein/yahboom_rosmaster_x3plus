@@ -9,9 +9,11 @@ sys.path.insert(0, str(SCRIPTS_DIR))
 from pick_preflight import (  # noqa: E402
     DriveDelta,
     IKCandidate,
+    all_states_collision_free,
     apply_drive_delta_xy,
     choose_collision_validated_candidates,
     complete_drive_delta,
+    ordered_offset_shortlist,
     ordered_shortlist,
     run_orientation_attempts,
 )
@@ -89,6 +91,18 @@ class PickPreflightTests(unittest.TestCase):
 
         self.assertEqual(ordered_shortlist(candidates, 0), candidates[:1])
 
+    def test_offset_shortlist_keeps_orientations_and_reaches_later_offset(self):
+        candidates = [
+            IKCandidate(0.24, 0.0, 0, ("a0", "a1"), (0.255, 0.195)),
+            IKCandidate(0.24, 0.0, 2, ("b0", "b1"), (0.255, 0.195)),
+            IKCandidate(0.27, 0.0, 1, ("c0", "c1"), (0.255, 0.195)),
+            IKCandidate(0.30, 0.0, 0, ("d0", "d1"), (0.255, 0.195)),
+        ]
+
+        shortlisted = ordered_offset_shortlist(candidates, 2)
+
+        self.assertEqual(shortlisted, candidates[:3])
+
     def test_later_base_offset_is_kept_when_first_offset_collides(self):
         candidates = [
             IKCandidate(0.24, 0.0, 0, ("a0", "a1"), (0.255, 0.195)),
@@ -124,6 +138,32 @@ class PickPreflightTests(unittest.TestCase):
         self.assertEqual(accepted, [candidates[1]])
         self.assertEqual(rejected, 1)
         self.assertEqual(calls, [0.24, 0.27])
+
+    def test_pick_collision_rejects_candidate_even_when_pre_pick_is_clear(self):
+        states = ["pre-pick", "pick"]
+
+        safe = all_states_collision_free(
+            states,
+            lambda state: state == "pick",
+        )
+
+        self.assertFalse(safe)
+
+    def test_both_pick_states_clear_accepts_candidate(self):
+        self.assertTrue(
+            all_states_collision_free(
+                ["pre-pick", "pick"],
+                lambda _state: False,
+            )
+        )
+
+    def test_collision_query_exception_fails_states_closed(self):
+        def unavailable(_state):
+            raise RuntimeError("planning scene query failed")
+
+        self.assertFalse(
+            all_states_collision_free(["pre-pick", "pick"], unavailable)
+        )
 
     def test_planning_failure_after_ik_success_tries_next_orientation(self):
         attempted = []

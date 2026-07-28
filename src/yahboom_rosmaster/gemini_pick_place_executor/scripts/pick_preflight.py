@@ -62,6 +62,31 @@ def ordered_shortlist(candidates, limit):
     return list(candidates[: max(1, int(limit))])
 
 
+def ordered_offset_shortlist(candidates, offset_limit):
+    """Keep every orientation for the first N distinct base offsets."""
+
+    limit = max(1, int(offset_limit))
+    selected = []
+    seen_offsets = []
+    for candidate in candidates:
+        offset = (candidate.dx, candidate.dy)
+        if offset not in seen_offsets:
+            if len(seen_offsets) >= limit:
+                break
+            seen_offsets.append(offset)
+        selected.append(candidate)
+    return selected
+
+
+def all_states_collision_free(states, is_colliding):
+    """Return true only when every state query succeeds and is collision-free."""
+
+    try:
+        return all(not is_colliding(state) for state in states)
+    except Exception:
+        return False
+
+
 def choose_collision_validated_candidates(candidates, validator):
     """Return safe candidates in order, rejecting validator errors closed."""
 
