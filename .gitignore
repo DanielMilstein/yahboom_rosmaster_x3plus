@@ -81,4 +81,5 @@ venv/
 .venv/
 .env
 .DS_Store
+.worktrees/
 src/ydlidar_ros2_driver/
