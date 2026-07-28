@@ -42,6 +42,20 @@ def apply_drive_delta_xy(x, y, delta):
     return float(x) - total_dx, float(y) - total_dy
 
 
+def complete_drive_delta(requested_dx, requested_dy, correction):
+    """Build a known total drive, or ``None`` if correction motion is unknown."""
+
+    if correction is None:
+        return None
+    correction_dx, correction_dy = correction
+    return DriveDelta(
+        requested_dx,
+        requested_dy,
+        correction_dx,
+        correction_dy,
+    )
+
+
 def choose_collision_validated_candidates(candidates, validator):
     """Return safe candidates in order, rejecting validator errors closed."""
 

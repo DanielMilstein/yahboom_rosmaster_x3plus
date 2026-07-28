@@ -32,6 +32,8 @@ from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
 from yahboom_rosmaster_msgs.srv import GeminiPickPlace, GeminiVerifyPick
 
+from pick_preflight import apply_drive_delta_xy, complete_drive_delta
+
 
 def normalized_point_to_pixel(point, width, height):
     y = float(point[0])
@@ -2547,20 +2549,24 @@ class GeminiPickPlaceExecutor(Node):
     def _lidar_audit_drive(self, pts_before, applied_dx, applied_dy, label):
         """Compare the just-executed drive's dead-reckoned displacement with
         the lidar scan match; log the mismatch, and (Phase B, gated) issue a
-        follow-up drive covering the measured shortfall."""
+        follow-up drive covering the measured shortfall.
+
+        Returns the translation commanded by that follow-up drive. A failed
+        correction returns None because the resulting point frame is unknown.
+        """
         if pts_before is None:
-            return
+            return 0.0, 0.0
         time.sleep(0.3)  # let a fresh post-drive scan arrive
         pts_after = self._lidar_scan_points()
         if pts_after is None:
-            return
+            return 0.0, 0.0
         match = self._scan_match(pts_before, pts_after, applied_dx, applied_dy)
         if match is None:
             self.get_logger().warn(
                 f"[{label}] lidar audit: scan match unreliable "
                 "(too few correspondences); trusting odometry"
             )
-            return
+            return 0.0, 0.0
         mdx, mdy, dyaw, rms, n_pairs = match
         ex, ey = mdx - applied_dx, mdy - applied_dy
         self.get_logger().info(
@@ -2570,7 +2576,7 @@ class GeminiPickPlaceExecutor(Node):
             f"mismatch ({ex:+.3f}, {ey:+.3f}) rms={rms:.3f} pairs={n_pairs}"
         )
         if not bool(self.get_parameter("lidar_drive_correction").value):
-            return
+            return 0.0, 0.0
         confident = rms <= 0.035 and n_pairs >= 100
         # Heading first: the drive intended zero yaw change, so any measured
         # dyaw is real base twist. Rotating it out here keeps per-drive
@@ -2590,7 +2596,7 @@ class GeminiPickPlaceExecutor(Node):
         cap = float(self.get_parameter("lidar_correction_max_m").value)
         err = math.hypot(ex, ey)
         if err <= tol:
-            return
+            return 0.0, 0.0
         # Real-scene match quality: first hardware audits showed rms
         # 0.018-0.022 with ~280 pairs while measuring a consistent,
         # tape-plausible 1 cm odometry shortfall — so the gate sits above
@@ -2601,7 +2607,7 @@ class GeminiPickPlaceExecutor(Node):
                 f"(rms={rms:.3f} pairs={n_pairs} "
                 f"dyaw={math.degrees(dyaw):+.1f}°)"
             )
-            return
+            return 0.0, 0.0
         cx = max(-cap, min(cap, -ex))
         cy = max(-cap, min(cap, -ey))
         if cx > 0.0:
@@ -2620,12 +2626,18 @@ class GeminiPickPlaceExecutor(Node):
                 )
                 cx = clamped
         if abs(cx) < 1e-6 and abs(cy) < 1e-6:
-            return
+            return 0.0, 0.0
         self.get_logger().info(
             f"[{label}] lidar correction: driving ({cx:+.3f}, {cy:+.3f}) "
             "to cover the measured shortfall"
         )
-        self.drive_relative_base(cx, cy)
+        if not self.drive_relative_base(cx, cy):
+            self.get_logger().error(
+                f"[{label}] lidar correction drive failed; final point "
+                "coordinates are unknown"
+            )
+            return None
+        return cx, cy
 
     def drive_staging(self, point, dx, dy, label):
         """Drive a fixed base displacement with the same bookkeeping as
@@ -2654,10 +2666,23 @@ class GeminiPickPlaceExecutor(Node):
         lidar_pts_before = self._lidar_scan_points()
         if not self.drive_relative_base(dx, dy):
             return None
-        point.point.x = float(point.point.x) - dx
-        point.point.y = float(point.point.y) - dy
-        self._lidar_audit_drive(lidar_pts_before, dx, dy, label)
-        return dx, dy
+        correction = self._lidar_audit_drive(
+            lidar_pts_before, dx, dy, label
+        )
+        delta = complete_drive_delta(dx, dy, correction)
+        if delta is None:
+            return None
+        point.point.x, point.point.y = apply_drive_delta_xy(
+            point.point.x, point.point.y, delta
+        )
+        total_dx, total_dy = delta.total
+        self.get_logger().info(
+            f"[{label}] total base translation "
+            f"requested=({dx:+.3f},{dy:+.3f}) "
+            f"lidar=({correction[0]:+.3f},{correction[1]:+.3f}) "
+            f"total=({total_dx:+.3f},{total_dy:+.3f})"
+        )
+        return total_dx, total_dy
 
     def drive_to_feasible(
         self, point, lift_z, label, max_dx=None, engage_last_lift=False
@@ -2684,12 +2709,23 @@ class GeminiPickPlaceExecutor(Node):
         axes_mode = str(self.get_parameter("drive_axes").value).lower()
         applied_dx = dx if axes_mode in ("xy", "x_only") else 0.0
         applied_dy = dy if axes_mode in ("xy", "y_only") else 0.0
-        self._lidar_audit_drive(lidar_pts_before, applied_dx, applied_dy, label)
-        if applied_dx != 0.0:
-            point.point.x = float(point.point.x) - applied_dx
-        if applied_dy != 0.0:
-            point.point.y = float(point.point.y) - applied_dy
-        return applied_dx, applied_dy
+        correction = self._lidar_audit_drive(
+            lidar_pts_before, applied_dx, applied_dy, label
+        )
+        delta = complete_drive_delta(applied_dx, applied_dy, correction)
+        if delta is None:
+            return None
+        point.point.x, point.point.y = apply_drive_delta_xy(
+            point.point.x, point.point.y, delta
+        )
+        total_dx, total_dy = delta.total
+        self.get_logger().info(
+            f"[{label}] total base translation "
+            f"requested=({applied_dx:+.3f},{applied_dy:+.3f}) "
+            f"lidar=({correction[0]:+.3f},{correction[1]:+.3f}) "
+            f"total=({total_dx:+.3f},{total_dy:+.3f})"
+        )
+        return total_dx, total_dy
 
     def drive_to_reach(self, target_point):
         sweet_x = float(self.get_parameter("sweet_x").value)

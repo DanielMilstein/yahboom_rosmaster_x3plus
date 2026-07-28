@@ -11,6 +11,7 @@ from pick_preflight import (  # noqa: E402
     IKCandidate,
     apply_drive_delta_xy,
     choose_collision_validated_candidates,
+    complete_drive_delta,
     run_orientation_attempts,
 )
 
@@ -26,6 +27,28 @@ class PickPreflightTests(unittest.TestCase):
         self.assertAlmostEqual(total_dy, 0.006)
         self.assertAlmostEqual(point_x, 0.447)
         self.assertAlmostEqual(point_y, -0.026)
+
+    def test_no_lidar_correction_keeps_requested_drive(self):
+        delta = complete_drive_delta(0.24, -0.01, (0.0, 0.0))
+
+        self.assertIsNotNone(delta)
+        self.assertEqual(delta.total, (0.24, -0.01))
+
+    def test_failed_lidar_correction_makes_drive_bookkeeping_unknown(self):
+        delta = complete_drive_delta(0.24, 0.0, None)
+
+        self.assertIsNone(delta)
+
+    def test_same_total_drive_updates_target_and_destination_once(self):
+        delta = complete_drive_delta(0.24, 0.0, (0.013, -0.004))
+
+        target = apply_drive_delta_xy(0.70, -0.02, delta)
+        destination = apply_drive_delta_xy(0.91, 0.12, delta)
+
+        self.assertAlmostEqual(target[0], 0.447)
+        self.assertAlmostEqual(target[1], -0.016)
+        self.assertAlmostEqual(destination[0], 0.657)
+        self.assertAlmostEqual(destination[1], 0.124)
 
     def test_colliding_candidate_is_rejected_for_later_orientation(self):
         first = IKCandidate(
