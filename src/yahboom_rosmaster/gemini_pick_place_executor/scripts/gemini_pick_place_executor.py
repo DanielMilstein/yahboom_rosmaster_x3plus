@@ -4260,6 +4260,7 @@ class GeminiPickPlaceExecutor(Node):
         from moveit.core.robot_state import RobotState
 
         arm_name = str(self.get_parameter("arm_group_name").value)
+        gripper_name = str(self.get_parameter("gripper_group_name").value)
         robot_model = self.moveit.get_robot_model()
         states = []
         try:
@@ -4271,9 +4272,11 @@ class GeminiPickPlaceExecutor(Node):
                 # Pre-pick and pick both occur with the jaws open. A fresh
                 # RobotState otherwise leaves grip_joint at its default
                 # closed value and can miss finger/bed collisions that the
-                # real open gripper would create.
-                state.set_variable_position(
-                    "grip_joint", GRIP_JOINT_AT_OPEN
+                # real open gripper would create. Humble's Python binding
+                # exposes the active-joint group setter; state.update()
+                # propagates that active joint to the gripper's mimics.
+                state.set_joint_group_active_positions(
+                    gripper_name, [GRIP_JOINT_AT_OPEN]
                 )
                 state.update()
                 states.append(state)

@@ -230,13 +230,22 @@ class ExecutorSourceRegressionTests(unittest.TestCase):
             for node in ast.walk(method)
             if isinstance(node, ast.Call)
             and isinstance(node.func, ast.Attribute)
-            and node.func.attr == "set_variable_position"
+            and node.func.attr == "set_joint_group_active_positions"
             and len(node.args) >= 2
-            and isinstance(node.args[0], ast.Constant)
-            and node.args[0].value == "grip_joint"
         ]
 
         self.assertNotEqual(open_gripper_assignments, [])
+
+    def test_collision_preflight_avoids_unbound_humble_variable_setter(self):
+        method = self._method("_candidate_is_collision_free")
+        called_attributes = {
+            node.func.attr
+            for node in ast.walk(method)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+        }
+
+        self.assertNotIn("set_variable_position", called_attributes)
 
     def test_real_bed_is_applied_synchronously_for_final_planning(self):
         method = self._method("_publish_printer_bed_collision")
