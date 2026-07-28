@@ -29,6 +29,7 @@ FORWARDED_PARAMS = [
     ("grasp_tilt_first", "false"),
     ("base_search_order", "min_reach"),
     ("base_search_ideal_reach_m", "0.33"),
+    ("collision_preflight_candidates", "5"),
     # 0.62, not 0.55: 0.55 parked the close perception inside the Astra's
     # ~0.6 m minimum depth range, maximizing dropouts.
     ("reperceive_min_target_x_m", "0.62"),
