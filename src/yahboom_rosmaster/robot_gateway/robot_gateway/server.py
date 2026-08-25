@@ -1,4 +1,4 @@
-"""HTTP gateway for robot print-removal jobs.
+"""HTTP gateway for robot jobs.
 
 Run inside a sourced workspace (systemd unit or terminal):
 
@@ -12,7 +12,10 @@ Environment:
 API (consumed by the Autoprint platform):
     GET  /health              -> {ok, busy}
     POST /jobs                -> 202 {job_id} | 409 when a job is running
-         body: {task: str, params: {name: value}, gemini_api_keys: [str], execute?: bool}
+         body: {kind?: 'pick_place'|'return_to_origin', task?: str,
+                params: {name: value}, gemini_api_keys: [str],
+                execute?: bool, timeout_sec?: int}
+         kind defaults to 'pick_place'; task is required for that kind only.
     GET  /jobs/{id}           -> {job_id, status, started_at, finished_at, log_tail}
     POST /jobs/{id}/cancel    -> {ok}
 """
@@ -21,27 +24,30 @@ from __future__ import annotations
 
 import os
 import threading
+from typing import Literal
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
-from .job import RemovalJob
+from .job import RobotJob
 
 app = FastAPI(title='robot_gateway')
 
-_jobs: dict[str, RemovalJob] = {}
+_jobs: dict[str, RobotJob] = {}
 _lock = threading.Lock()
 
 
 class JobRequest(BaseModel):
-    task: str = Field(min_length=1)
+    # Default is load-bearing: the Autoprint batch path sends no kind.
+    kind: Literal['pick_place', 'return_to_origin'] = 'pick_place'
+    task: str = ''
     params: dict[str, str] = Field(default_factory=dict)
     gemini_api_keys: list[str] = Field(default_factory=list)
     execute: bool = True
     timeout_sec: int = Field(default=600, ge=30, le=3600)
 
 
-def _running_job() -> RemovalJob | None:
+def _running_job() -> RobotJob | None:
     return next((j for j in _jobs.values() if j.status in ('queued', 'running')), None)
 
 
@@ -52,10 +58,14 @@ def health() -> dict:
 
 @app.post('/jobs', status_code=202)
 def create_job(req: JobRequest) -> dict:
+    # Checked here rather than on the model so an empty task is a 400, not pydantic's 422.
+    if req.kind == 'pick_place' and not req.task.strip():
+        raise HTTPException(status_code=400, detail='task is required for pick_place jobs')
     with _lock:
         if _running_job() is not None:
-            raise HTTPException(status_code=409, detail='a removal job is already running')
-        job = RemovalJob(
+            raise HTTPException(status_code=409, detail='a robot job is already running')
+        job = RobotJob(
+            kind=req.kind,
             task=req.task,
             params=req.params,
             gemini_api_keys=req.gemini_api_keys,
