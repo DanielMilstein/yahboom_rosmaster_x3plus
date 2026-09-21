@@ -58,6 +58,12 @@ Useful `pick_place` hardware overrides (see `executor.launch.py`
 FORWARDED_PARAMS): `drive_axes:=xy`, `reperceive_after_drive:=false`,
 `grasp_roll_offset_rad:=1.5708`.
 
+`pick_place` params may also name the Gemini bridge's knobs, which
+`removal.launch.py` routes to the bridge node instead of the executor
+(BRIDGE_PARAMS): `model_name` (default `gemini-robotics-er-1.6-preview`),
+`temperature` (`0.1`), `thinking_budget` (`0`; negative disables the
+thinking config). Example: `{"model_name": "gemini-robotics-er-1.5-preview"}`.
+
 Dry-run without moving the arm: pass `"execute": false` in the body.
 
 #### `return_to_origin` prerequisites

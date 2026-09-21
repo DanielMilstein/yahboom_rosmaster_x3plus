@@ -268,6 +268,26 @@ marked **node-only** are not exposed as launch arguments, so set them with
 | `verify_pick_required` | `true` | `true` fails the pick on a negative verdict; `false` only logs it. |
 | `max_pick_attempts` | `3` *(launch: 5)* | Pick retries (reset gripper, restow, re-perceive) before the run fails. |
 
+#### Gemini bridge (not executor parameters)
+
+The Gemini model is chosen by the **bridge** node
+(`gemini_robotics_bridge.py`), not the executor. `removal.launch.py` (the
+gateway / Autoprint path) declares these as launch arguments and routes them
+to the bridge, so they work in the Autoprint "Executor parameter overrides"
+JSON, e.g. `{"model_name": "gemini-robotics-er-1.5-preview"}`. When running
+the bridge by hand, pass them with `--ros-args -p model_name:=...`.
+
+| Parameter | Default | Description |
+|---|---|---|
+| `model_name` | `gemini-robotics-er-1.6-preview` | Gemini model used for every planning and verification call. |
+| `temperature` | `0.1` | Sampling temperature of the Gemini calls. |
+| `thinking_budget` | `0` | Thinking budget passed to Gemini. Negative omits the thinking config entirely. |
+
+The bridge also declares `api_key_env`, `api_key_envs`, `request_timeout_sec`,
+`max_retries`, `retry_backoff_sec`, `confidence_threshold` and `log_dir`;
+those are node-only (set via `--ros-args -p` or by adding them to
+`BRIDGE_PARAMS` in `removal.launch.py`).
+
 #### Destination point
 
 | Parameter | Default | Description |

@@ -7,7 +7,9 @@ Autoprint web app reach it (the gateway injects them per job).
 
 Hardware defaults: use_gazebo:=false use_sim_time:=false. Every launch
 argument given on the command line (task, execute, any FORWARDED_PARAMS name)
-is passed through to the executor's own launch file.
+is passed through to the executor's own launch file. The BRIDGE_PARAMS names
+below are instead handed to the Gemini bridge node, so the Autoprint
+per-printer override JSON can select the Gemini model.
 """
 
 import os
@@ -16,7 +18,17 @@ from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, OpaqueFunction
 from launch.launch_description_sources import PythonLaunchDescriptionSource
+from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
+
+
+# Launch arguments forwarded to the Gemini bridge node (not the executor).
+# Defaults mirror gemini_robotics_bridge.py.
+BRIDGE_PARAMS = [
+    ('model_name', 'gemini-robotics-er-1.6-preview'),
+    ('temperature', '0.1'),
+    ('thinking_budget', '0'),
+]
 
 
 def _launch_setup(context, *args, **kwargs):
@@ -39,6 +51,7 @@ def _launch_setup(context, *args, **kwargs):
             executable='gemini_robotics_bridge.py',
             name='gemini_robotics_bridge',
             output='screen',
+            parameters=[{name: LaunchConfiguration(name) for name, _ in BRIDGE_PARAMS}],
         ),
     ]
 
@@ -48,5 +61,6 @@ def generate_launch_description():
         DeclareLaunchArgument('use_gazebo', default_value='false'),
         DeclareLaunchArgument('use_sim_time', default_value='false'),
         DeclareLaunchArgument('auto_start', default_value='true'),
+        *[DeclareLaunchArgument(name, default_value=default) for name, default in BRIDGE_PARAMS],
         OpaqueFunction(function=_launch_setup),
     ])
