@@ -5,6 +5,7 @@ import json
 import math
 import threading
 import time
+import traceback
 from copy import deepcopy
 
 # moveit_py is a C++ binding; if it segfaults we want the Python-level
@@ -782,8 +783,43 @@ class GeminiPickPlaceExecutor(Node):
             fx += 0.02
         self.get_logger().info("IK probe complete (no motion was commanded).")
 
+    SENTINEL_SUCCESS = "Pick-and-place sequence completed"
+    SENTINEL_FAILURE = "Pick-and-place sequence aborted"
+
     def run_once(self):
+        """Run the sequence and make sure it reports how it ended.
+
+        robot_gateway decides a job's fate from exactly two log lines, the
+        sentinels above, and the node keeps spinning after the sequence, so
+        an exit that prints neither leaves the gateway job "running" until
+        its timeout (20 minutes under Autoprint). The body bails early at
+        several points (stow, perception, base drives) and a worker-thread
+        exception would otherwise die silently. This wrapper logs the
+        aborted sentinel for every exit the body did not report itself.
+        """
         execute = bool(self.get_parameter("execute").value)
+        self._sequence_reported = False
+        try:
+            self._run_once_body(execute)
+        except Exception:  # noqa: BLE001
+            self.get_logger().error(
+                "unhandled exception in the pick-and-place sequence:\n"
+                + traceback.format_exc()
+            )
+        finally:
+            # Debug runs (execute:=false) only log candidates and never
+            # reported a verdict; keep it that way.
+            if execute and not self._sequence_reported:
+                self._report_sequence_result(False)
+
+    def _report_sequence_result(self, success):
+        self._sequence_reported = True
+        if success:
+            self.get_logger().info(self.SENTINEL_SUCCESS)
+        else:
+            self.get_logger().error(self.SENTINEL_FAILURE)
+
+    def _run_once_body(self, execute):
         drive_enabled = bool(self.get_parameter("enable_base_drive").value)
         stow_for_perception = bool(self.get_parameter("stow_for_perception").value)
 
@@ -993,10 +1029,7 @@ class GeminiPickPlaceExecutor(Node):
                 table_z,
                 target_label,
             )
-            if success:
-                self.get_logger().info("Pick-and-place sequence completed")
-            else:
-                self.get_logger().error("Pick-and-place sequence aborted")
+            self._report_sequence_result(success)
             if success and initial_odom is not None and bool(
                 self.get_parameter("return_after_place").value
             ):
